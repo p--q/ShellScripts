@@ -1,13 +1,13 @@
 #!/bin/bash
 
 ################################################################################
-# Script Name:  video_to_frames_clean.sh
-# Description:  抽出間隔をボタンで選び、警告を抑制して1つのフォルダに保存
-# Version:      1.8.0
+# Script Name:  video_to_frames_fast.sh
+# Description:  高速シーク(-ss)を使用して、指定秒ごとにピンポイントで抽出
+# Version:      1.9.0
 ################################################################################
 
 echo "===================================================="
-echo "   Video Frame Extractor Ver 1.8.0"
+echo "   Video Frame Extractor Ver 1.9.0 (High Speed)"
 echo "===================================================="
 
 # 1. 動画が入っているフォルダを選択
@@ -37,9 +37,9 @@ else
     INTERVAL=$INTERVAL_CHOICE
 fi
 
-# ffmpegチェック
-if ! command -v ffmpeg &> /dev/null; then
-    zenity --error --text="ffmpeg がインストールされていません。"
+# ツールチェック (ffprobeも必要になります)
+if ! command -v ffmpeg &> /dev/null || ! command -v ffprobe &> /dev/null; then
+    zenity --error --text="ffmpeg または ffprobe が見つかりません。"
     exit 1
 fi
 
@@ -49,29 +49,38 @@ shopt -s nocaseglob
 found=false
 
 for video in *.{mp4,ts,mkv,avi,wmv}; do
-    if [[ ! -e "$video" ]]; then
-        continue
-    fi
+    if [[ ! -e "$video" ]]; then continue; fi
     found=true
 
     echo "----------------------------------------------------"
-    echo "処理中: $video"
+    echo "高速処理開始: $video"
 
     FILE_NAME_BASE="${video%.*}"
 
-    # 修正ポイント: 
-    # -pix_fmt yuvj420p を追加（JPEGに適したフルレンジのピクセル形式を明示）
-    # これにより "deprecated pixel format" 警告が抑制されます
-    ffmpeg -i "$video" -vf "fps=1/$INTERVAL" -pix_fmt yuvj420p -q:v 2 \
-        "$SAVE_BASE/${FILE_NAME_BASE}_%03d.jpg" -loglevel error
+    # 動画の総再生時間を取得（ffprobeを使用）
+    duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$video")
+    # 小数点を切り捨てて整数にする
+    duration_int=${duration%.*}
 
-    echo "完了: $video"
+    # 指定秒数ごとにジャンプして抽出
+    count=1
+    for (( s=0; s<duration_int; s+=INTERVAL )); do
+        # -ss を -i の前に置くことで高速シークが有効になります
+        # -frames:v 1 でその地点の1枚だけを取得
+        ffmpeg -ss "$s" -i "$video" -frames:v 1 -pix_fmt yuvj420p -q:v 2 \
+            "$SAVE_BASE/${FILE_NAME_BASE}_$(printf "%03d" $count).jpg" -loglevel error
+        
+        # 進捗をターミナルに表示
+        echo -n "." 
+        ((count++))
+    done
+    echo -e "\n完了: $video (計 $((count-1)) 枚)"
 done
 
 if [ "$found" = false ]; then
     zenity --info --text="対象ファイルが見つかりませんでした。"
 else
-    notify-send "処理完了" "すべての画像の保存が完了しました。"
+    notify-send "処理完了" "高速抽出が完了しました。"
 fi
 
 echo "===================================================="
