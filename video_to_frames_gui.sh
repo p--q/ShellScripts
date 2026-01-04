@@ -1,13 +1,13 @@
 #!/bin/bash
 
 ################################################################################
-# Script Name:  video_to_frames_final.sh
-# Description:  抽出間隔をボタンで選び、1つのフォルダに連番で保存
-# Version:      1.7.0
+# Script Name:  video_to_frames_clean.sh
+# Description:  抽出間隔をボタンで選び、警告を抑制して1つのフォルダに保存
+# Version:      1.8.0
 ################################################################################
 
 echo "===================================================="
-echo "   Video Frame Extractor Ver 1.7.0"
+echo "   Video Frame Extractor Ver 1.8.0"
 echo "===================================================="
 
 # 1. 動画が入っているフォルダを選択
@@ -37,10 +37,6 @@ else
     INTERVAL=$INTERVAL_CHOICE
 fi
 
-echo "読み込み元: $SOURCE_DIR"
-echo "保存先    : $SAVE_BASE"
-echo "抽出間隔  : $INTERVAL 秒ごと"
-
 # ffmpegチェック
 if ! command -v ffmpeg &> /dev/null; then
     zenity --error --text="ffmpeg がインストールされていません。"
@@ -63,10 +59,11 @@ for video in *.{mp4,ts,mkv,avi,wmv}; do
 
     FILE_NAME_BASE="${video%.*}"
 
-    # シンプルな連番形式で出力
-    # %03d は 001, 002... という意味です
-    ffmpeg -i "$video" -vf "fps=1/$INTERVAL" -q:v 2 \
-        "$SAVE_BASE/${FILE_NAME_BASE}_%03d.jpg" -loglevel warning
+    # 修正ポイント: 
+    # -pix_fmt yuvj420p を追加（JPEGに適したフルレンジのピクセル形式を明示）
+    # これにより "deprecated pixel format" 警告が抑制されます
+    ffmpeg -i "$video" -vf "fps=1/$INTERVAL" -pix_fmt yuvj420p -q:v 2 \
+        "$SAVE_BASE/${FILE_NAME_BASE}_%03d.jpg" -loglevel error
 
     echo "完了: $video"
 done
