@@ -1,33 +1,26 @@
 #!/bin/bash
 
 ################################################################################
-# Script Name:  video_to_frames_ultimate.sh
-# Description:  動画元・保存先・抽出間隔をすべてGUIで設定してキャプチャ抽出
-# Version:      1.3.0
+# Script Name:  video_to_frames_timestamp.sh
+# Description:  動画から指定秒ごとに、再生時間をファイル名に含めて直接保存
+# Version:      1.5.0
 ################################################################################
 
 echo "===================================================="
-echo "   Video Frame Extractor Ver 1.3.0"
+echo "   Video Frame Extractor Ver 1.5.0"
 echo "===================================================="
 
-# 1. 動画が入っているフォルダを選択
+# 1. フォルダと間隔の選択
 SOURCE_DIR=$(zenity --file-selection --directory --title="1. 動画が入っているフォルダを選択してください")
 [ -z "$SOURCE_DIR" ] && exit 0
 
-# 2. 保存先のフォルダを選択
 SAVE_BASE=$(zenity --file-selection --directory --title="2. 保存先のフォルダを選択してください" --filename="$HOME/ピクチャ/")
 [ -z "$SAVE_BASE" ] && exit 0
 
-# 3. 抽出間隔（秒）をスライダーで選択
-# --value: 初期値, --min-value: 最小, --max-value: 最大, --step: 刻み
 INTERVAL=$(zenity --scale --title="3. 抽出間隔の設定" \
     --text="何秒ごとに画像を保存しますか？" \
     --value=60 --min-value=1 --max-value=3600 --step=1)
 [ -z "$INTERVAL" ] && exit 0
-
-echo "読み込み元: $SOURCE_DIR"
-echo "保存先    : $SAVE_BASE"
-echo "抽出間隔  : $INTERVAL 秒ごと"
 
 # ffmpegチェック
 if ! command -v ffmpeg &> /dev/null; then
@@ -49,26 +42,46 @@ for video in *.{mp4,ts,mkv,avi,wmv}; do
     echo "----------------------------------------------------"
     echo "処理中: $video"
 
-    DIR_NAME="${video%.*}"
-    TARGET_DIR="$SAVE_BASE/$DIR_NAME"
-    mkdir -p "$TARGET_DIR"
+    FILE_NAME_BASE="${video%.*}"
 
-    # キャプチャ実行
-    # ユーザーが指定した $INTERVAL 秒を反映
-    ffmpeg -i "$video" -vf "fps=1/$INTERVAL" -q:v 2 "$TARGET_DIR/${DIR_NAME}_%03d.jpg" -loglevel warning
-    echo "完了: $TARGET_DIR"
+    # ファイル名に時刻を含めるためのffmpeg処理
+    # -vf fps=1/$INTERVAL: 指定間隔で抽出
+    # filename に %04d の代わりにタイムスタンプを模した連番を付与
+    # ※ffmpeg標準機能で「ファイル名に秒数」を入れるため、
+    # 後のリネーム処理が不要なスクリプト構成にしています。
+    
+    ffmpeg -i "$video" -vf "fps=1/$INTERVAL" -q:v 2 \
+        -f image2 -frame_pts 1 \
+        "$SAVE_BASE/${FILE_NAME_BASE}_pts%d.jpg" -loglevel warning
+
+    # 生成されたファイル名 (pts120.jpg等) を「00h02m00s」形式にリネーム
+    # この工程で「動画内の秒数」を読みやすい形式に変換します
+    for img in "$SAVE_BASE/${FILE_NAME_BASE}_pts"*.jpg; do
+        [ -e "$img" ] || continue
+        
+        # ptsの後の数字（秒数相当）を抽出
+        pts_val=$(echo "$img" | grep -oP 'pts\K[0-9]+')
+        
+        # 秒を 時:分:秒 に変換
+        h=$((pts_val / 3600))
+        m=$(((pts_val % 3600) / 60))
+        s=$((pts_val % 60))
+        
+        timestamp=$(printf "%02dh%02dm%02ds" $h $m $s)
+        
+        # 最終的なリネーム
+        mv "$img" "$SAVE_BASE/${FILE_NAME_BASE}_${timestamp}.jpg"
+    done
+
+    echo "完了: $video"
 done
 
 if [ "$found" = false ]; then
     zenity --info --text="対象ファイルが見つかりませんでした。"
 else
-    # デスクトップ通知を表示（おまけ機能）
-    notify-send "処理完了" "すべての動画のキャプチャが完了しました。"
+    notify-send "処理完了" "時刻付きファイル名の保存が完了しました。"
 fi
 
 echo "===================================================="
-echo "すべての処理が終了しました。"
-echo "Enterキーを押すとこのウィンドウを閉じます。"
-echo "===================================================="
-
+echo "完了！ Enterで閉じます。"
 read
