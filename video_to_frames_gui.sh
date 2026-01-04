@@ -1,13 +1,13 @@
 #!/bin/bash
 
 ################################################################################
-# Script Name:  video_to_frames_smart_select.sh
-# Description:  抽出間隔をボタン（リスト）で選択し、時刻付きファイル名で保存
-# Version:      1.6.0
+# Script Name:  video_to_frames_final.sh
+# Description:  抽出間隔をボタンで選び、1つのフォルダに連番で保存
+# Version:      1.7.0
 ################################################################################
 
 echo "===================================================="
-echo "   Video Frame Extractor Ver 1.6.0"
+echo "   Video Frame Extractor Ver 1.7.0"
 echo "===================================================="
 
 # 1. 動画が入っているフォルダを選択
@@ -18,7 +18,7 @@ SOURCE_DIR=$(zenity --file-selection --directory --title="1. 動画が入って�
 SAVE_BASE=$(zenity --file-selection --directory --title="2. 保存先のフォルダを選択してください" --filename="$HOME/ピクチャ/")
 [ -z "$SAVE_BASE" ] && exit 0
 
-# 3. 抽出間隔を選択（リスト形式）
+# 3. 抽出間隔を選択
 INTERVAL_CHOICE=$(zenity --list --radiolist --title="3. 抽出間隔の設定" \
     --text="抽出する間隔を選択してください" \
     --column="選択" --column="間隔（秒）" \
@@ -30,7 +30,6 @@ INTERVAL_CHOICE=$(zenity --list --radiolist --title="3. 抽出間隔の設定" \
 
 [ -z "$INTERVAL_CHOICE" ] && exit 0
 
-# 「手入力」が選ばれた場合は、スライダー（または入力ダイアログ）を出す
 if [ "$INTERVAL_CHOICE" = "手入力（カスタム）" ]; then
     INTERVAL=$(zenity --scale --title="カスタム間隔" --text="秒数を指定してください" --value=60 --min-value=1 --max-value=3600 --step=1)
     [ -z "$INTERVAL" ] && exit 0
@@ -64,26 +63,10 @@ for video in *.{mp4,ts,mkv,avi,wmv}; do
 
     FILE_NAME_BASE="${video%.*}"
 
-    # ffmpeg実行
-    # -frame_pts 1 を使用して秒数を取得
+    # シンプルな連番形式で出力
+    # %03d は 001, 002... という意味です
     ffmpeg -i "$video" -vf "fps=1/$INTERVAL" -q:v 2 \
-        -f image2 -frame_pts 1 \
-        "$SAVE_BASE/${FILE_NAME_BASE}_pts%d.jpg" -loglevel warning
-
-    # 生成されたファイルを [時h分m秒s] 形式に一括リネーム
-    for img in "$SAVE_BASE/${FILE_NAME_BASE}_pts"*.jpg; do
-        [ -e "$img" ] || continue
-        
-        pts_val=$(echo "$img" | grep -oP 'pts\K[0-9]+')
-        
-        h=$((pts_val / 3600))
-        m=$(((pts_val % 3600) / 60))
-        s=$((pts_val % 60))
-        
-        timestamp=$(printf "%02dh%02dm%02ds" $h $m $s)
-        
-        mv "$img" "$SAVE_BASE/${FILE_NAME_BASE}_${timestamp}.jpg"
-    done
+        "$SAVE_BASE/${FILE_NAME_BASE}_%03d.jpg" -loglevel warning
 
     echo "完了: $video"
 done
@@ -91,9 +74,12 @@ done
 if [ "$found" = false ]; then
     zenity --info --text="対象ファイルが見つかりませんでした。"
 else
-    notify-send "処理完了" "時刻付き画像（${INTERVAL}秒間隔）の保存が完了しました。"
+    notify-send "処理完了" "すべての画像の保存が完了しました。"
 fi
 
 echo "===================================================="
-echo "完了！ Enterで閉じます。"
+echo "すべての処理が終了しました。"
+echo "Enterキーを押すとこのウィンドウを閉じます。"
+echo "===================================================="
+
 read
