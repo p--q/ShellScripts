@@ -1,13 +1,13 @@
 #!/bin/bash
 
 ################################################################################
-# Script Name:  video_to_frames_ultimate_silent.sh
-# Description:  高速シーク時のエラー表示を完全に抑制し、進捗のみ表示
-# Version:      2.1.0
+# Script Name:  video_to_frames_final_with_path.sh
+# Description:  高速抽出・エラー非表示・最後に保存先パスを表示
+# Version:      2.2.0
 ################################################################################
 
 echo "===================================================="
-echo "   Video Frame Extractor Ver 2.1.0"
+echo "   Video Frame Extractor Ver 2.2.0"
 echo "===================================================="
 
 # 1. フォルダ選択
@@ -57,10 +57,7 @@ for video in *.{mp4,ts,mkv,avi,wmv}; do
     total_steps=$((duration_int / INTERVAL + 1))
 
     for (( s=0; s<duration_int; s+=INTERVAL )); do
-        # --- 修正の要：ffmpegコマンドの組み立て ---
-        # -loglevel quiet: ffmpeg自身のログを消す
-        # -er 4: エラー耐性を最大にする（壊れたフレームも無視して進む）
-        # 2>/dev/null: OSレベルで標準エラー出力を捨てる
+        # エラー出力を完全に遮断し、バックグラウンドで静かに実行
         ffmpeg -loglevel quiet -er 4 -ss "$s" -i "$video" \
             -frames:v 1 -q:v 2 -pix_fmt yuvj420p -an \
             "$SAVE_BASE/${FILE_NAME_BASE}_$(printf "%03d" $count).jpg" -y >/dev/null 2>&1
@@ -74,12 +71,22 @@ for video in *.{mp4,ts,mkv,avi,wmv}; do
     echo -e "\n完了: $video"
 done
 
+echo "===================================================="
 if [ "$found" = false ]; then
+    echo "対象ファイルが見つかりませんでした。"
     zenity --info --text="対象ファイルが見つかりませんでした。"
 else
-    notify-send "処理完了" "すべての抽出が終了しました。"
+    # 最後に保存先パスを明示
+    echo "すべての処理が終了しました。"
+    echo ""
+    echo "保存先フォルダのパス:"
+    echo "----------------------------------------------------"
+    echo "$SAVE_BASE"
+    echo "----------------------------------------------------"
+    echo ""
+    
+    notify-send "処理完了" "保存先: $SAVE_BASE"
 fi
 
-echo "===================================================="
-echo "完了！ Enterキーで閉じます。"
+echo "Enterキーを押すとこのウィンドウを閉じます。"
 read
