@@ -1,13 +1,13 @@
 #!/bin/bash
 
 ################################################################################
-# Script Name:  video_to_frames_fast_silent.sh
-# Description:  高速シーク時のデコードエラーを抑制し、進捗を表示
-# Version:      2.0.0
+# Script Name:  video_to_frames_ultimate_silent.sh
+# Description:  高速シーク時のエラー表示を完全に抑制し、進捗のみ表示
+# Version:      2.1.0
 ################################################################################
 
 echo "===================================================="
-echo "   Video Frame Extractor Ver 2.0.0 (Silent & Fast)"
+echo "   Video Frame Extractor Ver 2.1.0"
 echo "===================================================="
 
 # 1. フォルダ選択
@@ -54,17 +54,18 @@ for video in *.{mp4,ts,mkv,avi,wmv}; do
     duration_int=${duration%.*}
 
     count=1
-    # 処理枚数の合計を計算
     total_steps=$((duration_int / INTERVAL + 1))
 
     for (( s=0; s<duration_int; s+=INTERVAL )); do
-        # 修正ポイント: 
-        # -an (音声無効)
-        # 2>/dev/null (エラー出力を完全に捨てる)
-        ffmpeg -ss "$s" -i "$video" -frames:v 1 -pix_fmt yuvj420p -q:v 2 -an \
-            "$SAVE_BASE/${FILE_NAME_BASE}_$(printf "%03d" $count).jpg" -loglevel panic 2>/dev/null
+        # --- 修正の要：ffmpegコマンドの組み立て ---
+        # -loglevel quiet: ffmpeg自身のログを消す
+        # -er 4: エラー耐性を最大にする（壊れたフレームも無視して進む）
+        # 2>/dev/null: OSレベルで標準エラー出力を捨てる
+        ffmpeg -loglevel quiet -er 4 -ss "$s" -i "$video" \
+            -frames:v 1 -q:v 2 -pix_fmt yuvj420p -an \
+            "$SAVE_BASE/${FILE_NAME_BASE}_$(printf "%03d" $count).jpg" -y >/dev/null 2>&1
         
-        # 進捗計算と表示
+        # 進捗表示
         percent=$((count * 100 / total_steps))
         echo -ne "進捗: $percent% ($count / $total_steps 枚)\r"
         
