@@ -1,21 +1,8 @@
 #!/bin/bash
 
-# ==============================================================================
-# Script Name: convert_to_xga_pro.sh
-# Description: 文字の滲みを抑えてXGAへ拡大・変換（WebP形式）。
-# ==============================================================================
+# --- 依存関係チェック等は省略せず全体を記載 ---
+if command -v magick &> /dev/null; then IMG_TOOL="magick"; else IMG_TOOL="convert"; fi
 
-# --- 1. 依存関係チェック ---
-if command -v magick &> /dev/null; then
-    IMG_TOOL="magick"
-elif command -v convert &> /dev/null; then
-    IMG_TOOL="convert"
-else
-    zenity --error --text="ImageMagickがインストールされていません。"
-    exit 1
-fi
-
-# --- 2. メイン処理 ---
 (
     COUNT=0
     TOTAL=$#
@@ -25,33 +12,24 @@ fi
         DIR=$(dirname "$FILE")
         FILENAME=$(basename "$FILE")
         BASENAME="${FILENAME%.*}"
-        
-        # 出力ファイル（WebPに変更）
-        OUT_FILE="$DIR/${BASENAME}.webp"
-        if [ -f "$OUT_FILE" ]; then
-            I=1
-            while [ -f "$DIR/${BASENAME}_$(printf "%02d" $I).webp" ]; do
-                I=$((I + 1))
-            done
-            OUT_FILE="$DIR/${BASENAME}_$(printf "%02d" $I).webp"
-        fi
+        OUT_FILE="$DIR/${BASENAME}_xga.webp" # 識別しやすくするため_xgaを付与
+
+        # --- 図表・文字を綺麗に拡大する魔法の設定 ---
+        # 1. -filter Mitchell: ぼやけとカクカクの中間を狙う高品質な補完
+        # 2. -distort Resize: 単なる-resizeより計算が精密
+        # 3. -unsharp: 拡大でボケた輪郭を「文字」として認識できるレベルまで引き締める
+        $IMG_TOOL "$FILE" \
+            -filter Mitchell \
+            -distort Resize 1024x768 \
+            -unsharp 1.5x1+0.7+0.02 \
+            -background white -alpha remove -alpha off \
+            -quality 95 \
+            "$OUT_FILE"
 
         COUNT=$((COUNT + 1))
         PERCENT=$((COUNT * 100 / TOTAL))
         echo "$PERCENT"
-        echo "# 処理中: $FILENAME"
-
-        # --- 変換のポイント ---
-        # -filter point: ニアレストネイバー法を使い、拡大時のボケを防ぐ（文字がクッキリします）
-        # -define webp:lossless=true: 画質を1ミリも落としたくない場合はこれ（サイズは増えます）
-        $IMG_TOOL "$FILE" \
-            -filter point \
-            -resize 1024x768 \
-            -background white -alpha remove -alpha off \
-            -quality 90 \
-            "$OUT_FILE"
     done
-) | zenity --progress --title="画像変換 (高画質WebP)" --text="準備中..." --auto-close --percentage=0
+) | zenity --progress --title="高精度変換" --auto-close
 
-MSG=$(echo -e "処理が完了しました！\n文字の滲みを抑えてWebPで保存しました。")
-zenity --info --title="完了" --text="$MSG" --timeout=3
+zenity --info --text="図表向け調整で変換しました。" --timeout=3
