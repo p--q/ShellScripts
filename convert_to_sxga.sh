@@ -2,22 +2,42 @@
 
 # ==============================================================================
 # Script Name: convert_to_sxga.sh
-# Version:     4.0 (Simple & Robust Edition)
+# Version:     4.1 (Full Dependency Check & Simple Logic)
 # Updated:     2026-02-23
 #
 # [解説]
-# 1. 画像および1ページのみのPDFを「SXGA（1280x1024）」基準で変換。
-# 2. 進捗バーを廃止し、最もエラーの起きにくいシンプルな構造に刷新。
-# 3. 変換前後のサイズ比較、複数ページPDFのスキップ通知、高品質WebP化は維持。
+# 1. 動作に必要なパッケージ(ImageMagick, Poppler, Zenity)を冒頭で厳格にチェック。
+# 2. 画像および1ページのみのPDFを「SXGA（1280x1024）」基準で変換。
+# 3. 変換前後のサイズ比較を表示。複数ページPDFは理由を添えてスキップ。
+# 4. 処理の確実性を優先し、プログレスバーを排したシンプル構造。
 # ==============================================================================
 
-# --- 依存チェック ---
+# --- 1. 依存パッケージのチェック ---
+MISSING_TOOLS=""
+# ImageMagick (magick または convert)
+if ! command -v magick &> /dev/null && ! command -v convert &> /dev/null; then
+    MISSING_TOOLS+="・ImageMagick (magick または convert)\n"
+fi
+# Poppler (pdftoppm, pdfinfo)
+if ! command -v pdftoppm &> /dev/null; then
+    MISSING_TOOLS+="・poppler-utils (pdftoppm)\n"
+fi
+if ! command -v pdfinfo &> /dev/null; then
+    MISSING_TOOLS+="・poppler-utils (pdfinfo)\n"
+fi
+# Zenity
 if ! command -v zenity &> /dev/null; then
     echo "Error: zenity is not installed."
     exit 1
 fi
 
-# サイズ単位変換関数
+# 不足ツールがあればダイアログを出して終了
+if [ -n "$MISSING_TOOLS" ]; then
+    zenity --error --title="依存エラー" --text="以下のパッケージが必要です。インストールしてください:\n\n$MISSING_TOOLS\n【コマンド例】\nsudo apt install imagemagick poppler-utils"
+    exit 1
+fi
+
+# --- 2. 各種設定 ---
 format_size() {
     local size=$1
     if [ "$size" -lt 1024 ]; then
@@ -33,23 +53,25 @@ REPORT_LIST=""
 TOTAL=$#
 COUNT=0
 
+# コマンド判別
+CMD=$(command -v magick || command -v convert)
+ID_CMD=$(command -v identify || echo "magick identify")
+
 # 実行場所の解決
 [ -n "$1" ] && cd "$(dirname "$1")" 2>/dev/null
 
+# --- 3. 処理ループ ---
 for FILE in "$@"; do
     [ ! -f "$FILE" ] && continue
     
     COUNT=$((COUNT + 1))
-    # 進行状況をターミナルに出力（GUI実行時はバックグラウンドで動作）
-    echo "Processing: $COUNT / $TOTAL"
-
     ABS_FILE=$(realpath "$FILE")
     DIR=$(dirname "$ABS_FILE")
     BASENAME=$(basename "${ABS_FILE%.*}")
     EXT_LOWER=$(echo "${ABS_FILE##*.}" | tr '[:upper:]' '[:lower:]')
     OUT_FILE="$DIR/${BASENAME}.webp"
 
-    # 元のサイズ取得
+    # 元のサイズ
     OLD_SIZE_RAW=$(stat -c%s "$ABS_FILE" 2>/dev/null || echo 0)
     OLD_SIZE_HUMAN=$(format_size "$OLD_SIZE_RAW")
 
@@ -60,7 +82,7 @@ for FILE in "$@"; do
         OUT_FILE="$DIR/${BASENAME}_$I.webp"
     fi
 
-    # --- PDF処理 ---
+    # PDF処理
     PROC_FILE="$ABS_FILE"
     IS_PDF_TMP=false
     if [ "$EXT_LOWER" = "pdf" ]; then
@@ -76,14 +98,12 @@ for FILE in "$@"; do
                 continue
             fi
         else
-            REPORT_LIST+="[スキップ] $BASENAME (複数ページあるため変換不可: ${PAGES}P)\n"
+            REPORT_LIST+="[スキップ] $BASENAME (複数ページ不可: ${PAGES}P)\n"
             continue
         fi
     fi
 
-    # --- 画像変換 ---
-    CMD=$(command -v magick || command -v convert)
-    ID_CMD=$(command -v identify || echo "magick identify")
+    # 画像変換
     SIZE_INFO=$($ID_CMD -ping -format "%w %h" "$PROC_FILE" 2>/dev/null)
     read -r W H <<< "$SIZE_INFO"
 
@@ -98,24 +118,21 @@ for FILE in "$@"; do
         fi
         
         [ "$EXT_LOWER" = "pdf" ] && STATUS="PDF->$STATUS"
-        
         NEW_SIZE_RAW=$(stat -c%s "$OUT_FILE" 2>/dev/null || echo 0)
         NEW_SIZE_HUMAN=$(format_size "$NEW_SIZE_RAW")
         NEW_DIM=$($ID_CMD -ping -format "%wx%h" "$OUT_FILE" 2>/dev/null)
-
         REPORT_LIST+="[$STATUS] $BASENAME\n    └ $NEW_DIM | $OLD_SIZE_HUMAN -> $NEW_SIZE_HUMAN\n"
     else
-        REPORT_LIST+="[失敗] $BASENAME (サイズ解析不能)\n"
+        REPORT_LIST+="[失敗] $BASENAME (解析不能)\n"
     fi
 
-    # 一時ファイル削除
     [ "$IS_PDF_TMP" = true ] && rm -f "$PROC_FILE"
 done
 
-# 全処理終了後にレポートを表示
+# --- 4. 結果表示 ---
 if [ -n "$REPORT_LIST" ]; then
     echo -e "$REPORT_LIST" | zenity --text-info \
-        --title="変換完了 (v4.0)" \
+        --title="変換完了 (v4.1)" \
         --width=750 --height=550 \
         --ok-label="閉じる" \
         --font="Monospace 10"
