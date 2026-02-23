@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# ==============================================================================
+# Script Name: convert_to_xga_png.sh
+# Description: PNGのまま文字の鮮明さを維持してXGAサイズへ拡大。
+# ==============================================================================
+
+if command -v magick &> /dev/null; then IMG_TOOL="magick"; else IMG_TOOL="convert"; fi
+
+(
+    COUNT=0
+    TOTAL=$#
+    for FILE in "$@"; do
+        if [ ! -f "$FILE" ]; then continue; fi
+
+        DIR=$(dirname "$FILE")
+        FILENAME=$(basename "$FILE")
+        BASENAME="${FILENAME%.*}"
+        OUT_FILE="$DIR/${BASENAME}_xga.png"
+
+        # --- PNG向けの文字最適化設定 ---
+        # 1. -interpolate Integer: 補完を最小限にして文字の芯を残す
+        # 2. -filter Lanczos: 縮小・拡大の王道。Mitchellより少しクッキリします
+        $IMG_TOOL "$FILE" \
+            -filter Lanczos \
+            -resize 1024x768 \
+            -background white -alpha remove -alpha off \
+            "$OUT_FILE"
+
+        COUNT=$((COUNT + 1))
+        PERCENT=$((COUNT * 100 / TOTAL))
+        echo "$PERCENT"
+    done
+) | zenity --progress --title="PNG高画質拡大" --auto-close
+
+MSG=$(echo -e "PNG形式で変換が完了しました。\n文字の輪郭を保護しています。")
+zenity --info --text="$MSG" --timeout=3
