@@ -2,11 +2,10 @@
 
 # ==============================================================================
 # Script Name: convert_to_sxga_lossless.sh
-# Version:     2.6 (Diagram & Illustration Optimized)
+# Version:     2.5 (Hybrid Compression - Stable)
 # Updated:     2026-02-23
-# Description: イラスト・文字入りの図に最適化したSXGA変換スクリプト。
-#              拡大時はMitchellフィルタ+シャープネスで文字をクッキリさせ、
-#              Lossless WebPで保存。維持時はLossy WebPで軽量化。
+# Description: 拡大時はLossless(高画質)、維持時はLossy(軽量)で変換。
+#              余計な加工をせず、素材の画質を尊重する設定です。
 # ==============================================================================
 
 # コマンドのセットアップ
@@ -53,25 +52,20 @@ REPORT_LIST=""
         echo "$PERCENT"
         echo "# 処理中: $BASENAME (${W}x${H})"
 
-        # 共通背景処理（透過対策）
+        # 共通背景処理（白背景で透過対策）
         COMMON_OPTS="-background white -alpha remove -alpha off"
 
         # --- 判定ロジック ---
         if [ "$W" -ge 1280 ] || [ "$H" -ge 1024 ]; then
             # 【サイズ維持ルート】
-            # 元が十分大きいため、Lossy(Quality 90)で効率よく保存
+            # 元の大きさを活かし、Lossy(Quality 90)でJPGより軽量化
             $CONVERT "$FILE" $COMMON_OPTS -quality 90 "$OUT_FILE"
             STATUS="維持(Lossy)"
         else
-            # 【拡大ルート：イラスト・文字特化】
-            # -filter Mitchell: 文字の縁に不自然な光輪（ハロー）が出にくい
-            # -unsharp: 0x0.5+0.5+0.008 の微弱なシャープで文字の読みやすさを向上
-            # -define webp:lossless=true: 拡大による劣化をこれ以上増やさない
-            $CONVERT "$FILE" $COMMON_OPTS \
-                -filter Mitchell -resize "1280x1024" \
-                -unsharp 0x0.5+0.5+0.008 \
-                -define webp:lossless=true "$OUT_FILE"
-            STATUS="拡大(Lossless/Sharp)"
+            # 【拡大ルート】
+            # 標準的なLanczosフィルタで丁寧に拡大し、Losslessで劣化を防ぐ
+            $CONVERT "$FILE" $COMMON_OPTS -filter Lanczos -resize "1280x1024" -define webp:lossless=true "$OUT_FILE"
+            STATUS="拡大(Lossless)"
         fi
 
         # 最終的な結果の確認
@@ -81,7 +75,7 @@ REPORT_LIST=""
 
     # 最終レポート表示
     echo -e "$REPORT_LIST" | zenity --text-info \
-        --title="変換完了 (v2.6 イラスト・文字特化版)" \
+        --title="変換完了 (v2.5 安定版)" \
         --width=750 --height=450 \
         --ok-label="閉じる" \
         --font="Monospace 10"
