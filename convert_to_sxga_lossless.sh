@@ -2,86 +2,80 @@
 
 # ==============================================================================
 # Script Name: convert_to_sxga_lossless.sh
-# Version:     2.2 (Command Fix)
+# Version:     2.3 (Refined)
 # Updated:     2026-02-23
+# Description: 1280x1024以上の辺があれば維持、なければ拡大。
+#              WebP Lossless変換 + 背景白埋め。
 # ==============================================================================
 
-# コマンドの存在確認
+# コマンドのセットアップ
 if command -v magick &> /dev/null; then
-    IMG_CONVERT="magick"
-    IMG_IDENTIFY="magick identify"
-elif command -v convert &> /dev/null; then
-    IMG_CONVERT="convert"
-    IMG_IDENTIFY="identify"
+    CONVERT="magick"
+    IDENTIFY="magick identify"
 else
-    zenity --error --text="ImageMagickが見つかりません。"
-    exit 1
+    CONVERT="convert"
+    IDENTIFY="identify"
 fi
 
-UPSCALED_LIST=""
-MAINTAINED_LIST=""
+# ログ用変数
+REPORT_LIST=""
 
 (
     TOTAL=$#
     COUNT=0
     for FILE in "$@"; do
-        if [ ! -f "$FILE" ]; then continue; fi
+        [ ! -f "$FILE" ] && continue
 
+        # 出力ファイル名の生成
         DIR=$(dirname "$FILE")
-        FILENAME=$(basename "$FILE")
-        BASENAME="${FILENAME%.*}"
+        BASENAME=$(basename "${FILE%.*}")
         OUT_FILE="$DIR/${BASENAME}_oversxga.webp"
 
-        # 同名回避
-        if [ -f "$OUT_FILE" ]; then
-            I=1
-            while [ -f "$DIR/${BASENAME}_oversxga_$(printf "%02d" $I).webp" ]; do
-                I=$((I + 1))
-            done
+        # 同名回避（連番付与）
+        I=1
+        while [ -f "$OUT_FILE" ]; do
             OUT_FILE="$DIR/${BASENAME}_oversxga_$(printf "%02d" $I).webp"
-        fi
+            I=$((I + 1))
+        done
 
-        # 【修正】 identify コマンドを正しく呼び出す
-        # 以前のバージョンではここが変数の重複で間違っていました
-        RAW_INFO=$($IMG_IDENTIFY -ping -format "%w %h" "$FILE" 2>/dev/null)
-        
-        WIDTH=$(echo "$RAW_INFO" | awk '{print $1}' | tr -d '[:space:]')
-        HEIGHT=$(echo "$RAW_INFO" | awk '{print $2}' | tr -d '[:space:]')
+        # サイズ取得（pingでヘッダーのみ読み取り）
+        SIZE_INFO=$($IDENTIFY -ping -format "%w %h" "$FILE" 2>/dev/null)
+        read -r W H <<< "$SIZE_INFO"
 
-        # デバッグ：数値が取れなかった場合
-        if [[ ! "$WIDTH" =~ ^[0-9]+$ ]]; then
-             MAINTAINED_LIST+="- $FILENAME (取得失敗: $RAW_INFO)\n"
+        # 取得失敗時のスキップ処理
+        if [[ ! "$W" =~ ^[0-9]+$ ]]; then
+             REPORT_LIST+="[失敗] $FILE (サイズ取得不能)\n"
              continue
         fi
 
         COUNT=$((COUNT + 1))
         PERCENT=$((COUNT * 100 / TOTAL))
         echo "$PERCENT"
-        echo "# v2.2 解析中: $FILENAME (${WIDTH}x${HEIGHT})"
+        echo "# 処理中: $BASENAME (${W}x${H})"
 
-        # 判定：横1280以上 OR 縦1024以上 なら維持
-        if [ "$WIDTH" -ge 1280 ] || [ "$HEIGHT" -ge 1024 ]; then
-            $IMG_CONVERT "$FILE" -background white -alpha remove -alpha off \
-                -define webp:lossless=true "$OUT_FILE"
-            
-            REAL_OUT=$($IMG_IDENTIFY -ping -format "%wx%h" "$OUT_FILE" 2>/dev/null)
-            MAINTAINED_LIST+="- $FILENAME (維持: ${WIDTH}x${HEIGHT} -> 実出力: ${REAL_OUT})\n"
+        # 共通の変換オプション
+        OPTS="-background white -alpha remove -alpha off -define webp:lossless=true"
+
+        # 判定：どちらかの辺がSXGA以上ならサイズ維持
+        if [ "$W" -ge 1280 ] || [ "$H" -ge 1024 ]; then
+            $CONVERT "$FILE" $OPTS "$OUT_FILE"
+            STATUS="維持"
         else
-            # 拡大
-            $IMG_CONVERT "$FILE" -background white -alpha remove -alpha off \
-                -filter Lanczos -resize "1280x1024" \
-                -define webp:lossless=true "$OUT_FILE"
-            
-            REAL_OUT=$($IMG_IDENTIFY -ping -format "%wx%h" "$OUT_FILE" 2>/dev/null)
-            UPSCALED_LIST+="- $FILENAME (拡大: ${WIDTH}x${HEIGHT} -> 実出力: ${REAL_OUT})\n"
+            # 両方の辺が小さい場合は拡大
+            $CONVERT "$FILE" $OPTS -filter Lanczos -resize "1280x1024" "$OUT_FILE"
+            STATUS="拡大"
         fi
+
+        # 結果をリストに追加
+        NEW_SIZE=$($IDENTIFY -ping -format "%wx%h" "$OUT_FILE" 2>/dev/null)
+        REPORT_LIST+="[$STATUS] $BASENAME: ${W}x${H} -> $NEW_SIZE\n"
     done
 
-    REPORT="/tmp/conversion_report_$$.txt"
-    echo -e "■サイズ維持またはエラー（拡大なし）\n${MAINTAINED_LIST:-なし}\n" > "$REPORT"
-    echo -e "■拡大処理を実施\n${UPSCALED_LIST:-なし}" >> "$REPORT"
-    
-    zenity --text-info --title="変換レポート v2.2" --filename="$REPORT" --width=700 --height=500 --font="Monospace 10" --ok-label="閉じる"
-    rm "$REPORT"
+    # 最終レポート表示
+    echo -e "$REPORT_LIST" | zenity --text-info \
+        --title="変換完了 (v2.3)" \
+        --width=600 --height=400 \
+        --ok-label="閉じる" \
+        --font="Monospace 10"
 
-) | zenity --progress --title="SXGA変換 v2.2" --text="開始中..." --auto-close --percentage=0
+) | zenity --progress --title="SXGA変換" --text="準備中..." --auto-close --percentage=0
