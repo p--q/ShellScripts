@@ -2,18 +2,22 @@
 
 # ==============================================================================
 # Script Name: convert_to_sxga.sh
-# Version:     3.9 (Reliable Progress Bar)
+# Version:     4.0 (Simple & Robust Edition)
 # Updated:     2026-02-23
 #
 # [解説]
-# - 進捗バーを確実に出すため、名前付きパイプ(FIFO)を利用した通信方式を採用。
-# - レポート生成、サイズ比較、1ページPDF判定などの機能はすべて継承。
+# 1. 画像および1ページのみのPDFを「SXGA（1280x1024）」基準で変換。
+# 2. 進捗バーを廃止し、最もエラーの起きにくいシンプルな構造に刷新。
+# 3. 変換前後のサイズ比較、複数ページPDFのスキップ通知、高品質WebP化は維持。
 # ==============================================================================
 
+# --- 依存チェック ---
 if ! command -v zenity &> /dev/null; then
+    echo "Error: zenity is not installed."
     exit 1
 fi
 
+# サイズ単位変換関数
 format_size() {
     local size=$1
     if [ "$size" -lt 1024 ]; then
@@ -25,29 +29,19 @@ format_size() {
     fi
 }
 
-# --- 進捗ダイアログの準備 ---
-# 名前付きパイプを作成して、進捗バーをバックグラウンドで起動
-PIPE=$(mktemp -u)
-mkfifo "$PIPE"
-zenity --progress --title="SXGA変換" --text="準備中..." --auto-close --percentage=0 < "$PIPE" &
-Z_PID=$!
-exec 3> "$PIPE" # ファイル記述子3に進捗バーへの経路を割り当て
-
-TMP_REPORT=$(mktemp)
+REPORT_LIST=""
 TOTAL=$#
 COUNT=0
 
+# 実行場所の解決
 [ -n "$1" ] && cd "$(dirname "$1")" 2>/dev/null
 
 for FILE in "$@"; do
     [ ! -f "$FILE" ] && continue
     
     COUNT=$((COUNT + 1))
-    PERCENT=$((COUNT * 100 / TOTAL))
-    
-    # 進捗バーへの出力 (記述子3へ送る)
-    echo "$PERCENT" >&3
-    echo "# 処理中: $(basename "$FILE") ($COUNT/$TOTAL)" >&3
+    # 進行状況をターミナルに出力（GUI実行時はバックグラウンドで動作）
+    echo "Processing: $COUNT / $TOTAL"
 
     ABS_FILE=$(realpath "$FILE")
     DIR=$(dirname "$ABS_FILE")
@@ -55,9 +49,11 @@ for FILE in "$@"; do
     EXT_LOWER=$(echo "${ABS_FILE##*.}" | tr '[:upper:]' '[:lower:]')
     OUT_FILE="$DIR/${BASENAME}.webp"
 
+    # 元のサイズ取得
     OLD_SIZE_RAW=$(stat -c%s "$ABS_FILE" 2>/dev/null || echo 0)
     OLD_SIZE_HUMAN=$(format_size "$OLD_SIZE_RAW")
 
+    # 同名ファイル回避
     if [ -f "$OUT_FILE" ]; then
         I=1
         while [ -f "$DIR/${BASENAME}_$I.webp" ]; do I=$((I+1)); done
@@ -76,11 +72,11 @@ for FILE in "$@"; do
                 PROC_FILE="$TEMP_PNG"
                 IS_PDF_TMP=true
             else
-                echo "[失敗] $BASENAME (PDF画像化失敗)" >> "$TMP_REPORT"
+                REPORT_LIST+="[失敗] $BASENAME (PDF画像化失敗)\n"
                 continue
             fi
         else
-            echo "[スキップ] $BASENAME (複数ページ不可: ${PAGES}P)" >> "$TMP_REPORT"
+            REPORT_LIST+="[スキップ] $BASENAME (複数ページあるため変換不可: ${PAGES}P)\n"
             continue
         fi
     fi
@@ -100,24 +96,29 @@ for FILE in "$@"; do
             $CMD "$PROC_FILE" $OPTS -filter Lanczos -resize "1280x1024" "$OUT_FILE"
             STATUS="拡大"
         fi
+        
         [ "$EXT_LOWER" = "pdf" ] && STATUS="PDF->$STATUS"
+        
         NEW_SIZE_RAW=$(stat -c%s "$OUT_FILE" 2>/dev/null || echo 0)
         NEW_SIZE_HUMAN=$(format_size "$NEW_SIZE_RAW")
         NEW_DIM=$($ID_CMD -ping -format "%wx%h" "$OUT_FILE" 2>/dev/null)
-        echo "[$STATUS] $BASENAME"$'\n'"    └ $NEW_DIM | $OLD_SIZE_HUMAN -> $NEW_SIZE_HUMAN" >> "$TMP_REPORT"
+
+        REPORT_LIST+="[$STATUS] $BASENAME\n    └ $NEW_DIM | $OLD_SIZE_HUMAN -> $NEW_SIZE_HUMAN\n"
     else
-        echo "[失敗] $BASENAME (解析不能)" >> "$TMP_REPORT"
+        REPORT_LIST+="[失敗] $BASENAME (サイズ解析不能)\n"
     fi
 
+    # 一時ファイル削除
     [ "$IS_PDF_TMP" = true ] && rm -f "$PROC_FILE"
 done
 
-# --- 後片付け ---
-exec 3>&-      # 進捗バーへの接続を閉じる
-rm -f "$PIPE"   # パイプを削除
-
 # 全処理終了後にレポートを表示
-if [ -f "$TMP_REPORT" ]; then
-    zenity --text-info --title="変換完了 (v3.9)" --width=750 --height=500 --font="Monospace 10" < "$TMP_REPORT"
-    rm -f "$TMP_REPORT"
+if [ -n "$REPORT_LIST" ]; then
+    echo -e "$REPORT_LIST" | zenity --text-info \
+        --title="変換完了 (v4.0)" \
+        --width=750 --height=550 \
+        --ok-label="閉じる" \
+        --font="Monospace 10"
+else
+    zenity --info --title="完了" --text="処理対象のファイルがありませんでした。" --width=300
 fi
