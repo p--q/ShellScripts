@@ -2,8 +2,8 @@
 
 # ==============================================================================
 # Script Name: install_to_nemo_scripts.sh
-# Description: 選択したファイルをNemoのスクリプトフォルダへコピーし実行権限を付与します。
-# Version:     1.0.0
+# Description: ファイルをNemoのスクリプトフォルダへコピーし実行権限を付与、Nemoを再起動。
+# Version:     1.1.0
 # ==============================================================================
 
 TARGET_DIR="$HOME/.local/share/nemo/scripts"
@@ -12,21 +12,25 @@ TARGET_DIR="$HOME/.local/share/nemo/scripts"
 mkdir -p "$TARGET_DIR"
 
 if [ "$#" -eq 0 ]; then
-    zenity --info --title="使い方" --text="Nemoスクリプトに登録したいファイルを右クリックして実行してください。"
+    zenity --info --title="使い方" --text="登録したいスクリプトファイルを右クリックして実行してください。"
     exit 0
 fi
 
+# ファイルのコピーと権限付与
 for FILE in "$@"; do
     FILENAME=$(basename "$FILE")
-    
-    # コピー実行
     cp "$FILE" "$TARGET_DIR/"
-    
-    # 実行権限を付与（ホームディレクトリ内なので確実に成功します）
     chmod +x "$TARGET_DIR/$FILENAME"
 done
 
-# Nemoを再起動してメニューを更新
+# --- Nemoの確実な再起動 ---
+# Nemoを完全に終了
 nemo -q
 
-zenity --info --title="完了" --text="以下のファイルをスクリプトフォルダに登録しました：\n$*\n\nNemoを再起動しました。" --timeout=3
+# プロセスが終了するのを少し待つ
+sleep 1
+
+# バックグラウンドでNemoをデスクトップ管理モードで再開
+nohup nemo -n > /dev/null 2>&1 &
+
+zenity --info --title="完了" --text="以下のファイルを登録しました：\n$*\n\n右クリックメニューが更新されました。" --timeout=3
