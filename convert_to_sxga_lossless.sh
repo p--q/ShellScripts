@@ -2,10 +2,9 @@
 
 # ==============================================================================
 # Script Name: convert_to_sxga_lossless.sh
-# Version:     2.4 (Smart Naming)
+# Version:     2.5 (Hybrid Compression)
 # Updated:     2026-02-23
-# Description: 1280x1024以上の辺があれば維持、なければ拡大。
-#              出力名は基本「元の名前.webp」。重複時のみ連番を付与。
+# Description: 拡大時(SXGA未満)はLossless、維持時はLossy(Quality 90)で変換。
 # ==============================================================================
 
 # コマンドのセットアップ
@@ -28,11 +27,8 @@ REPORT_LIST=""
         DIR=$(dirname "$FILE")
         BASENAME=$(basename "${FILE%.*}")
         
-        # 1. まずは「元の名前.webp」を試みる
+        # 出力ファイル名（重複時は連番）
         OUT_FILE="$DIR/${BASENAME}.webp"
-
-        # 2. 同名のファイル（ソース自身、または既存のwebp）がある場合のみ連番を付与
-        #    ※元のファイルが .webp だった場合も考慮し、上書きを防ぎます
         if [ -f "$OUT_FILE" ]; then
             I=1
             while [ -f "$DIR/${BASENAME}_$(printf "%02d" $I).webp" ]; do
@@ -53,17 +49,19 @@ REPORT_LIST=""
         COUNT=$((COUNT + 1))
         PERCENT=$((COUNT * 100 / TOTAL))
         echo "$PERCENT"
-        echo "# 処理中: $BASENAME (${W}x${HEIGHT})"
+        echo "# 処理中: $BASENAME (${W}x${H})"
 
-        OPTS="-background white -alpha remove -alpha off -define webp:lossless=true"
+        # 共通背景処理
+        COMMON_OPTS="-background white -alpha remove -alpha off"
 
-        # 判定
+        # 判定：どちらかの辺がSXGA以上ならサイズ維持（Lossyで軽量化）
         if [ "$W" -ge 1280 ] || [ "$H" -ge 1024 ]; then
-            $CONVERT "$FILE" $OPTS "$OUT_FILE"
-            STATUS="維持"
+            $CONVERT "$FILE" $COMMON_OPTS -quality 90 "$OUT_FILE"
+            STATUS="維持(Lossy)"
         else
-            $CONVERT "$FILE" $OPTS -filter Lanczos -resize "1280x1024" "$OUT_FILE"
-            STATUS="拡大"
+            # 両方の辺が小さい場合は拡大（画質保護のためLossless）
+            $CONVERT "$FILE" $COMMON_OPTS -filter Lanczos -resize "1280x1024" -define webp:lossless=true "$OUT_FILE"
+            STATUS="拡大(Lossless)"
         fi
 
         NEW_SIZE=$($IDENTIFY -ping -format "%wx%h" "$OUT_FILE" 2>/dev/null)
@@ -71,9 +69,9 @@ REPORT_LIST=""
     done
 
     echo -e "$REPORT_LIST" | zenity --text-info \
-        --title="変換完了 (v2.4)" \
-        --width=700 --height=450 \
+        --title="ハイブリッド変換完了 (v2.5)" \
+        --width=750 --height=450 \
         --ok-label="閉じる" \
         --font="Monospace 10"
 
-) | zenity --progress --title="SXGA変換" --text="開始中..." --auto-close --percentage=0
+) | zenity --progress --title="SXGA変換" --text="処理中..." --auto-close --percentage=0
