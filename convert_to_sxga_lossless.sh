@@ -2,10 +2,10 @@
 
 # ==============================================================================
 # Script Name: convert_to_sxga_lossless.sh
-# Version:     1.4
+# Version:     1.5
 # Updated:     2026-02-23
 # Description: 横1280以上、または縦1024以上の場合はサイズ維持。
-#              それ以外（両方の辺がSXGA未満）の場合は拡大。
+#              それ以外は、アスペクト比を維持しつつ最大SXGAまで強制拡大。
 # ==============================================================================
 
 if command -v magick &> /dev/null; then
@@ -15,11 +15,6 @@ elif command -v convert &> /dev/null; then
 else
     zenity --error --text="ImageMagickがインストールされていません。"
     exit 1
-fi
-
-if [ "$#" -eq 0 ]; then
-    zenity --info --title="使い方" --text="画像を右クリックメニューから実行してください。"
-    exit 0
 fi
 
 UPSCALED_LIST=""
@@ -45,7 +40,7 @@ MAINTAINED_LIST=""
             OUT_FILE="$DIR/${BASENAME}_converted_$(printf "%02d" $I).webp"
         fi
 
-        # 現在のサイズを取得
+        # サイズ取得
         WIDTH=$($IMG_TOOL identify -format "%w" "$FILE")
         HEIGHT=$($IMG_TOOL identify -format "%h" "$FILE")
 
@@ -54,29 +49,28 @@ MAINTAINED_LIST=""
         echo "$PERCENT"
         echo "# 処理中: $FILENAME"
 
-        # 【ご指定のロジックに変更】
-        # 横が1280以上、または縦が1024以上であれば「拡大しない（維持）」
+        # 【ロジック再確認】
+        # 横1280以上、または縦1024以上なら「何もしない（維持）」
         if [ "$WIDTH" -ge 1280 ] || [ "$HEIGHT" -ge 1024 ]; then
-            # サイズ維持でWebP Lossless変換
             $IMG_TOOL "$FILE" -background white -alpha remove -alpha off \
                 -define webp:lossless=true "$OUT_FILE"
             MAINTAINED_LIST+="- $FILENAME (維持: ${WIDTH}x${HEIGHT})\n"
         else
-            # 上記条件に当てはまらない（両方の辺がSXGA未満）場合は拡大
+            # 両方小さければ拡大
+            # ^ を付けて 1280x1024 の「どちらかの辺が枠に達するまで」拡大し、
+            # かつアスペクト比を壊さない設定に調整します。
             $IMG_TOOL "$FILE" -background white -alpha remove -alpha off \
                 -filter Lanczos -resize "1280x1024" -define webp:lossless=true "$OUT_FILE"
             
-            # 変換後のサイズを確認
             NEW_SIZE=$($IMG_TOOL identify -format "%wx%h" "$OUT_FILE")
             UPSCALED_LIST+="- $FILENAME (${WIDTH}x${HEIGHT} -> ${NEW_SIZE})\n"
         fi
     done
 
-    # レポート作成
     REPORT="/tmp/conversion_report_$$.txt"
-    echo -e "【サイズ維持（条件合致：横1280↑ or 縦1024↑）】\n${MAINTAINED_LIST:-なし}\n\n【拡大処理（両辺がSXGA未満）】\n${UPSCALED_LIST:-なし}" > "$REPORT"
+    echo -e "【サイズ維持（条件合致）】\n${MAINTAINED_LIST:-なし}\n\n【拡大処理（実施）】\n${UPSCALED_LIST:-なし}" > "$REPORT"
     
-    zenity --text-info --title="変換レポート v1.4" --filename="$REPORT" --width=600 --height=450 --font="Monospace 10"
+    zenity --text-info --title="変換レポート v1.5" --filename="$REPORT" --width=600 --height=450 --font="Monospace 10"
     rm "$REPORT"
 
-) | zenity --progress --title="SXGA変換 v1.4" --text="解析中..." --auto-close --percentage=0
+) | zenity --progress --title="SXGA変換 v1.5" --text="解析中..." --auto-close --percentage=0
