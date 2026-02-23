@@ -1,8 +1,10 @@
 #!/bin/bash
 
 # ==============================================================================
-# Script Name: convert_to_sxga_lossless_smart.sh
-# Description: 1280x1024より大きい場合のみ縮小。それ以外はサイズ維持。
+# Script Name: convert_to_sxga_lossless.sh
+# Version:     1.1
+# Updated:     2026-02-23
+# Description: SXGA(1280x1024)より小さい画像のみ拡大し、大きい画像は縮小せずに維持。
 #              WebP Lossless変換 + 透明背景の白埋め。
 # ==============================================================================
 
@@ -30,31 +32,32 @@ fi
         FILENAME=$(basename "$FILE")
         BASENAME="${FILENAME%.*}"
         
-        OUT_FILE="$DIR/${BASENAME}_sxga.webp"
+        OUT_FILE="$DIR/${BASENAME}_converted.webp"
         
         if [ -f "$OUT_FILE" ]; then
             I=1
-            while [ -f "$DIR/${BASENAME}_sxga_$(printf "%02d" $I).webp" ]; do
+            while [ -f "$DIR/${BASENAME}_converted_$(printf "%02d" $I).webp" ]; do
                 I=$((I + 1))
             done
-            OUT_FILE="$DIR/${BASENAME}_sxga_$(printf "%02d" $I).webp"
+            OUT_FILE="$DIR/${BASENAME}_converted_$(printf "%02d" $I).webp"
         fi
 
         COUNT=$((COUNT + 1))
         PERCENT=$((COUNT * 100 / TOTAL))
         echo "$PERCENT"
-        echo "# 処理中: $FILENAME"
+        echo "# 処理中: $FILENAME (v1.1)"
 
-        # --- 変換実行のポイント ---
-        # 1280x1024> : 「>」フラグは、元の画像が指定サイズより大きい場合のみ縮小します。
-        # 小さい画像を引き伸ばす（ボケる）のを防ぎつつ、巨大な画像だけを抑えます。
+        # ----------------------------------------------------------------------
+        # ポイント: "1280x1024<" フラグ
+        # 指定サイズより小さい場合のみ拡大（大きい画像はリサイズをスキップ）
+        # ----------------------------------------------------------------------
         $IMG_TOOL "$FILE" \
             -background white -alpha remove -alpha off \
             -filter Lanczos \
-            -resize "1280x1024>" \
+            -resize "1280x1024<" \
             -define webp:lossless=true \
             "$OUT_FILE"
     done
-) | zenity --progress --title="スマートSXGA変換" --text="処理を開始します..." --auto-close --percentage=0
+) | zenity --progress --title="SXGA変換 v1.1" --text="処理を開始します..." --auto-close --percentage=0
 
-zenity --info --title="完了" --text="処理が完了しました。\n(大きい画像のみSXGAへ縮小されました)" --timeout=3
+zenity --info --title="完了" --text="バージョン1.1の処理が完了しました。\n(大きい画像はサイズを維持しました)" --timeout=3
