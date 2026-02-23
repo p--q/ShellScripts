@@ -2,12 +2,12 @@
 
 # ==============================================================================
 # Script Name: convert_to_sxga.sh
-# Version:     3.8 (Progress Bar Fixed)
+# Version:     3.9 (Reliable Progress Bar)
 # Updated:     2026-02-23
 #
 # [解説]
-# - zenity --progress が正しく表示されるよう、パイプラインの出力を整理。
-# - ファイルサイズ比較、1ページPDF判定、Lossy WebP統一などの機能は維持。
+# - 進捗バーを確実に出すため、名前付きパイプ(FIFO)を利用した通信方式を採用。
+# - レポート生成、サイズ比較、1ページPDF判定などの機能はすべて継承。
 # ==============================================================================
 
 if ! command -v zenity &> /dev/null; then
@@ -25,26 +25,29 @@ format_size() {
     fi
 }
 
-# 一時的なレポート保存用
+# --- 進捗ダイアログの準備 ---
+# 名前付きパイプを作成して、進捗バーをバックグラウンドで起動
+PIPE=$(mktemp -u)
+mkfifo "$PIPE"
+zenity --progress --title="SXGA変換" --text="準備中..." --auto-close --percentage=0 < "$PIPE" &
+Z_PID=$!
+exec 3> "$PIPE" # ファイル記述子3に進捗バーへの経路を割り当て
+
 TMP_REPORT=$(mktemp)
 TOTAL=$#
 COUNT=0
 
-# 実行場所の解決
 [ -n "$1" ] && cd "$(dirname "$1")" 2>/dev/null
 
-# 処理ループ
 for FILE in "$@"; do
     [ ! -f "$FILE" ] && continue
     
-    # --- 進捗更新 (Zenityに渡す) ---
     COUNT=$((COUNT + 1))
     PERCENT=$((COUNT * 100 / TOTAL))
     
-    # 重要なポイント: 標準エラー出力(>&2)を使って進捗をパイプに流し込み、
-    # 標準出力はレポート用に確保します。
-    echo "$PERCENT"
-    echo "# 処理中: $(basename "$FILE") ($COUNT/$TOTAL)"
+    # 進捗バーへの出力 (記述子3へ送る)
+    echo "$PERCENT" >&3
+    echo "# 処理中: $(basename "$FILE") ($COUNT/$TOTAL)" >&3
 
     ABS_FILE=$(realpath "$FILE")
     DIR=$(dirname "$ABS_FILE")
@@ -107,11 +110,14 @@ for FILE in "$@"; do
     fi
 
     [ "$IS_PDF_TMP" = true ] && rm -f "$PROC_FILE"
+done
 
-done | zenity --progress --title="SXGA変換" --text="準備中..." --auto-close --percentage=0
+# --- 後片付け ---
+exec 3>&-      # 進捗バーへの接続を閉じる
+rm -f "$PIPE"   # パイプを削除
 
 # 全処理終了後にレポートを表示
 if [ -f "$TMP_REPORT" ]; then
-    zenity --text-info --title="変換完了 (v3.8)" --width=750 --height=500 --font="Monospace 10" < "$TMP_REPORT"
+    zenity --text-info --title="変換完了 (v3.9)" --width=750 --height=500 --font="Monospace 10" < "$TMP_REPORT"
     rm -f "$TMP_REPORT"
 fi
