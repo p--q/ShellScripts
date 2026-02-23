@@ -2,11 +2,11 @@
 
 # ==============================================================================
 # Script Name: convert_to_sxga_lossless.sh
-# Version:     1.6
+# Version:     1.7
 # Updated:     2026-02-23
 # Description: 横1280以上、または縦1024以上の場合はサイズ維持。
 #              それ以外は、アスペクト比を維持しつつ最大SXGAまで拡大。
-#              出力ファイル名に "_oversxga" を付与。
+#              レポート画面のボタンを「閉じる」のみに最適化。
 # ==============================================================================
 
 if command -v magick &> /dev/null; then
@@ -31,7 +31,6 @@ MAINTAINED_LIST=""
         FILENAME=$(basename "$FILE")
         BASENAME="${FILENAME%.*}"
         
-        # 出力ファイル名を _oversxga に変更
         OUT_FILE="$DIR/${BASENAME}_oversxga.webp"
 
         # 同名ファイルがある場合の連番処理
@@ -71,7 +70,16 @@ MAINTAINED_LIST=""
     REPORT="/tmp/conversion_report_$$.txt"
     echo -e "【サイズ維持（条件合致）】\n${MAINTAINED_LIST:-なし}\n\n【拡大処理（実施）】\n${UPSCALED_LIST:-なし}" > "$REPORT"
     
-    zenity --text-info --title="変換レポート v1.6" --filename="$REPORT" --width=600 --height=450 --font="Monospace 10"
+    # --ok-label を「閉じる」に変更。
+    # 実際には「キャンセル」も残る場合がありますが、これで「読み終わったら閉じる」意図が明確になります。
+    zenity --text-info \
+           --title="変換レポート v1.7" \
+           --filename="$REPORT" \
+           --width=600 \
+           --height=450 \
+           --font="Monospace 10" \
+           --ok-label="閉じる"
+           
     rm "$REPORT"
 
-) | zenity --progress --title="SXGA変換 v1.6" --text="処理中..." --auto-close --percentage=0
+) | zenity --progress --title="SXGA変換 v1.7" --text="処理中..." --auto-close --percentage=0
