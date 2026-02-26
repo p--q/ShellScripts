@@ -69,4 +69,69 @@ for TARGET_DIR in $TARGET_DIRS; do
     [ -z "$TARGET_DIR" ] && continue
 
     ABS_TARGET_DIR=$(realpath "$TARGET_DIR")
-    DIR_NAME=$(basename "$ABS_TARGET_
+    DIR_NAME=$(basename "$ABS_TARGET_DIR")
+    PARENT_DIR=$(dirname "$ABS_TARGET_DIR")
+    OUTPUT_BASE_NAME="${DIR_NAME}${SUFFIX}.7z"
+
+    LOCAL_WORK_ROOT="${HOME}/.backup_temp_work_$(date +%s)"
+    LOCAL_TEMP_DIR="${LOCAL_WORK_ROOT}/${DIR_NAME}"
+    mkdir -p "$LOCAL_TEMP_DIR"
+
+    (
+        echo "# 既存のアーカイブをクリーンアップ中..."
+        rm -f "${PARENT_DIR}/${OUTPUT_BASE_NAME}"*
+
+        # 1. NASからローカルへコピー
+        mapfile -t ALL_FILES < <(cd "$ABS_TARGET_DIR" && find . -type f)
+        TOTAL_FILES=${#ALL_FILES[@]}
+        CUR_FILES=0
+        for f in "${ALL_FILES[@]}"; do
+            echo "# 取り込み中: $f"
+            mkdir -p "$(dirname "$LOCAL_TEMP_DIR/$f")"
+            cp "$ABS_TARGET_DIR/$f" "$LOCAL_TEMP_DIR/$f"
+            CUR_FILES=$((CUR_FILES + 1))
+            echo "$((CUR_FILES * 20 / TOTAL_FILES))"
+        done
+
+        # 2. FLAC変換
+        if [ "$DO_FLAC" = "yes" ]; then
+            echo "# FLAC変換中..."
+            mapfile -t AUDIO_FILES < <(find "$LOCAL_TEMP_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \))
+            TOTAL_A=${#AUDIO_FILES[@]}
+            [ $TOTAL_A -eq 0 ] && TOTAL_A=1
+            COUNT_A=0
+            for file in "${AUDIO_FILES[@]}"; do
+                flac --silent --force "$file" -o "${file%.*}.flac" &> /dev/null && rm "$file"
+                COUNT_A=$((COUNT_A + 1))
+                echo "$((20 + COUNT_A * 40 / TOTAL_A))"
+            done
+        fi
+
+        # 3. 7z圧縮
+        echo "# 7z圧縮中..."
+        cd "$LOCAL_TEMP_DIR" || exit
+        7z a -mhe=on $P_ARG -v"${SPLIT_SIZE}" -mx="${COMP_LEVEL}" -mmt=on "${LOCAL_WORK_ROOT}/out.7z" . -y > /dev/null
+        echo "85"
+
+        # 4. NASおよびローカル保存用フォルダへ転送
+        echo "# ファイルを転送中..."
+        cd "$LOCAL_WORK_ROOT" || exit
+        mapfile -t OUT_7Z < <(ls out.7z*)
+        TOTAL_OUT=${#OUT_7Z[@]}
+        COUNT_OUT=0
+        for f in "${OUT_7Z[@]}"; do
+            DEST_NAME=$(echo "$f" | sed "s/out.7z/${OUTPUT_BASE_NAME}/")
+            cp "$f" "${PARENT_DIR}/${DEST_NAME}"
+            cp "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
+            
+            COUNT_OUT=$((COUNT_OUT + 1))
+            echo "$((85 + COUNT_OUT * 14 / TOTAL_OUT))"
+        done
+
+        # 後片付け
+        rm -rf "$LOCAL_WORK_ROOT"
+        echo "100"
+    ) | zenity --progress --title="処理中: $DIR_NAME" --auto-close --pulsate
+done
+
+zenity --info --title="完了" --text="バージョン 1.6 の処理が完了しました。\n\n【アーカイブの場所】\nNAS: 選択したフォルダの親ディレクトリ\nローカル: ${LOCAL_ARCHIVE_DIR}"
