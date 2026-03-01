@@ -1,8 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     1.9.5 (Simple Mode - Auto FLAC & No Split)
-# Description: FLAC変換を自動で行い、分割なしの7z暗号化を高速に実行します。
+# Version:     1.9.7 (Final Polish - Info Dialog Restored)
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
@@ -33,8 +32,8 @@ if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
     exit 1
 fi
 
-# --- 4. 設定入力パネル (さらにシンプルに) ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.5" \
+# --- 4. 設定入力パネル ---
+CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.7" \
     --text="FLAC変換とパスワード保護を自動実行します。" \
     --add-entry="1. ファイル名に付加する接尾辞" \
     --add-entry="2. 分割容量 (例: 4400m) [空欄で分割なし]" \
@@ -47,16 +46,17 @@ CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.5" \
 # パース
 SUFFIX=$(echo "$CONFIG" | cut -d',' -f1)
 SPLIT_SIZE_RAW=$(echo "$CONFIG" | cut -d',' -f2)
-PASS1=$(echo "$CONFIG" | cut -d', ' -f3)
+PASS1=$(echo "$CONFIG" | cut -d',' -f3)
 PASS2=$(echo "$CONFIG" | cut -d',' -f4)
 
-# 分割設定の構築
-V_ARG=""
-if [ -n "$SPLIT_SIZE_RAW" ]; then
-    V_ARG="-v${SPLIT_SIZE_RAW}"
+# パスワード一致チェック
+if [ "$PASS1" != "$PASS2" ]; then
+    zenity --error --text="パスワードが一致しません。\nもう一度やり直してください。"
+    exit 1
 fi
 
-[ "$PASS1" != "$PASS2" ] && { zenity --error --text="パスワード不一致"; exit 1; }
+# 7zオプションの構築
+V_ARG=""; [ -n "$SPLIT_SIZE_RAW" ] && V_ARG="-v${SPLIT_SIZE_RAW}"
 P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
 
 LOCAL_ARCHIVE_DIR="${HOME}/Backup_Archives"
@@ -80,13 +80,11 @@ for TARGET_DIR in $TARGET_DIRS; do
         cd "$ABS_TARGET_DIR" || exit
         find . -type f -print0 | xargs -0 -I{} cp --parents {} "$LOCAL_TEMP_DIR/"
         
-        # 常にFLAC変換を実行
         find "$LOCAL_TEMP_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \) -exec sh -c 'flac --silent --force "$1" -o "${1%.*}.flac" && rm "$1"' _ {} \;
         echo "50"
 
-        echo "# 2/3: 暗号化中 (高速・分割なし)..."
+        echo "# 2/3: 暗号化中 (高速)..."
         cd "$LOCAL_TEMP_DIR" || exit
-        # V_ARG が空なら分割なしで実行
         7z a $P_ARG -mhe=off $V_ARG -mx=0 -mmt=on "${LOCAL_WORK_ROOT}/${OUTPUT_BASE_NAME}.7z" . -y > /dev/null
         echo "90"
 
@@ -102,4 +100,5 @@ for TARGET_DIR in $TARGET_DIRS; do
     ) | zenity --progress --title="処理中: $DIR_NAME" --auto-close --pulsate
 done
 
-zenity --info --title="完了" --text="バックアップが完了しました。"
+# --- 【修正済み】完了ダイアログ ---
+zenity --info --title="完了" --text="処理が完了しました。\n\n保存先: ${LOCAL_ARCHIVE_DIR}"
