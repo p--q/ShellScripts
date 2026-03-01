@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     2.1.2 (Strict Argument Handling for Nemo)
+# Version:     2.1.3 (Nemo Dedicated - No Picker)
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
@@ -12,32 +12,26 @@ for tool in "zenity" "7z" "flac"; do
     fi
 done
 
-# --- 2. ターゲットの取得 (判定ロジックを刷新) ---
+# --- 2. ターゲットの取得 (右クリック引数のみ) ---
 TARGET_DIRS=""
 
-# Nemoの環境変数、または引数 ($@) があるかチェック
-if [ -n "$NEMO_SCRIPT_SELECTED_FILE_PATHS" ]; then
-    # Nemoスクリプト変数がある場合
-    TARGET_DIRS=$(echo "$NEMO_SCRIPT_SELECTED_FILE_PATHS" | tr '\n' '|')
-elif [ $# -gt 0 ]; then
-    # 引数が1つ以上存在する場合（Nemoの標準的な挙動はこちら）
-    for arg in "$@"; do
-        # 絶対パスに変換して連結
-        ABS_PATH=$(realpath "$arg")
-        [ -d "$ABS_PATH" ] && TARGET_DIRS="${TARGET_DIRS}${ABS_PATH}|"
-    done
-fi
+# Nemoの変数、または直接の引数をループで処理
+for arg in "$@"; do
+    # パスを絶対パスに変換し、フォルダであるか確認
+    ABS_PATH=$(realpath "$arg")
+    if [ -d "$ABS_PATH" ]; then
+        TARGET_DIRS="${TARGET_DIRS}${ABS_PATH}|"
+    fi
+done
 
 # 末尾のパイプを削除
 TARGET_DIRS="${TARGET_DIRS%|}"
 
-# もしここまでで空なら、初めてダイアログを出す
+# 万が一ターゲットが空の場合（何も選択せずに実行された場合など）
 if [ -z "$TARGET_DIRS" ]; then
-    TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --title="NAS上のフォルダを選択してください")
+    zenity --error --text="対象のフォルダが指定されていません。\nフォルダを右クリックして実行してください。"
+    exit 1
 fi
-
-# それでも空（キャンセル）なら終了
-[ -z "$TARGET_DIRS" ] && exit
 
 # --- 3. 動的な空き容量チェック ---
 TOTAL_REQUIRED_KB=0
@@ -57,8 +51,8 @@ if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
 fi
 
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v2.1.2" \
-    --text="FLAC変換とパスワード保護を実行します。" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v2.1.3" \
+    --text="選択されたフォルダをFLAC変換・暗号化します。" \
     --add-entry="1. ファイル名に付加する接尾辞" \
     --add-entry="2. 分割容量 (例: 4400m) [空欄で分割なし]" \
     --add-password="3. パスワード" \
@@ -115,3 +109,21 @@ process_backup() {
                 local BASE="${f%%.7z*}"
                 local COUNTER=1
                 while [ -e "${LOCAL_ARCHIVE_DIR}/${BASE}(${COUNTER}).${EXT}" ]; do
+                    ((COUNTER++))
+                done
+                DEST_NAME="${BASE}(${COUNTER}).${EXT}"
+            fi
+            mv "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
+        done
+        rm -rf "$LOCAL_WORK_ROOT"
+        echo "100"
+    ) | zenity --progress --title="バックアップ中" --auto-close --pulsate
+}
+
+# --- 6. 実行 ---
+IFS="|"
+for DIR in $TARGET_DIRS; do
+    [ -z "$DIR" ] && continue
+    process_backup "$DIR"
+done
+IFS=$OLD
