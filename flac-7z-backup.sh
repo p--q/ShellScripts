@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     1.9.3 (Debug & 7z Fix)
+# Version:     1.9.5 (Simple Mode - Auto FLAC & No Split)
+# Description: FLAC変換を自動で行い、分割なしの7z暗号化を高速に実行します。
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
 for tool in "zenity" "7z" "flac"; do
     if ! command -v "$tool" &> /dev/null; then
-        zenity --error --text="必要なツール ($tool) が見つかりません。インストールしてください。"
+        zenity --error --text="必要なツール ($tool) が見つかりません。"
         exit 1
     fi
 done
@@ -24,7 +25,7 @@ for DIR in $TARGET_DIRS; do
     DIR_SIZE=$(du -sk "$DIR" | cut -f1)
     TOTAL_REQUIRED_KB=$((TOTAL_REQUIRED_KB + DIR_SIZE))
 done
-BUFFERED_REQUIRED=$((TOTAL_REQUIRED_KB * 12 / 10))
+BUFFERED_REQUIRED=$((TOTAL_REQUIRED_KB * 11 / 10))
 FREE_SPACE=$(df -Pk "$HOME" | awk 'NR==2 {print $4}')
 
 if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
@@ -32,33 +33,31 @@ if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
     exit 1
 fi
 
-# --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.3" \
-    --text="FLAC変換後、無圧縮7zで暗号化します。" \
-    --add-combo="1. オーディオをFLACに変換するか" --combo-values="yes|no" \
-    --add-entry="2. 分割容量 (例: 4400m)" \
-    --add-entry="3. ファイル名に付加する接尾辞" \
-    --add-password="4. パスワード" \
-    --add-password="5. パスワード（確認）" \
+# --- 4. 設定入力パネル (さらにシンプルに) ---
+CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.5" \
+    --text="FLAC変換とパスワード保護を自動実行します。" \
+    --add-entry="1. ファイル名に付加する接尾辞" \
+    --add-entry="2. 分割容量 (例: 4400m) [空欄で分割なし]" \
+    --add-password="3. パスワード" \
+    --add-password="4. パスワード（確認）" \
     --separator=",")
 
 [ $? -ne 0 ] || [ -z "$CONFIG" ] && exit
 
-# --- パース処理の修正 ---
-DO_FLAC_RAW=$(echo "$CONFIG" | cut -d',' -f1)
-SPLIT_SIZE_RAW=$(echo "$CONFIG" | cut -d',' -f2); SPLIT_SIZE=${SPLIT_SIZE_RAW:-4400m}
-SUFFIX=$(echo "$CONFIG" | cut -d',' -f3)
-PASS1=$(echo "$CONFIG" | cut -d',' -f4)
-PASS2=$(echo "$CONFIG" | cut -d',' -f5)
+# パース
+SUFFIX=$(echo "$CONFIG" | cut -d',' -f1)
+SPLIT_SIZE_RAW=$(echo "$CONFIG" | cut -d',' -f2)
+PASS1=$(echo "$CONFIG" | cut -d', ' -f3)
+PASS2=$(echo "$CONFIG" | cut -d',' -f4)
 
-[ "$DO_FLAC_RAW" != "no" ] && DO_FLAC="yes" || DO_FLAC="no"
-[ "$PASS1" != "$PASS2" ] && { zenity --error --text="パスワード不一致"; exit 1; }
-
-# パスワード引数の構築（空でない場合のみ）
-P_ARG=""
-if [ -n "$PASS1" ]; then
-    P_ARG="-p${PASS1}"
+# 分割設定の構築
+V_ARG=""
+if [ -n "$SPLIT_SIZE_RAW" ]; then
+    V_ARG="-v${SPLIT_SIZE_RAW}"
 fi
+
+[ "$PASS1" != "$PASS2" ] && { zenity --error --text="パスワード不一致"; exit 1; }
+P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
 
 LOCAL_ARCHIVE_DIR="${HOME}/Backup_Archives"
 mkdir -p "$LOCAL_ARCHIVE_DIR"
@@ -70,40 +69,32 @@ for TARGET_DIR in $TARGET_DIRS; do
 
     ABS_TARGET_DIR=$(realpath "$TARGET_DIR")
     DIR_NAME=$(basename "$ABS_TARGET_DIR")
-    OUTPUT_BASE_NAME="${DIR_NAME}${SUFFIX}.7z"
+    OUTPUT_BASE_NAME="${DIR_NAME}${SUFFIX}"
 
     LOCAL_WORK_ROOT="${HOME}/.backup_temp_work_$(date +%s)"
     LOCAL_TEMP_DIR="${LOCAL_WORK_ROOT}/${DIR_NAME}"
     mkdir -p "$LOCAL_TEMP_DIR"
 
     (
-        echo "# 1/4: NASから取り込み中..."
+        echo "# 1/3: 取り込み & 自動FLAC変換中..."
         cd "$ABS_TARGET_DIR" || exit
         find . -type f -print0 | xargs -0 -I{} cp --parents {} "$LOCAL_TEMP_DIR/"
-        echo "25"
-
-        if [ "$DO_FLAC" = "yes" ]; then
-            echo "# 2/4: FLAC変換中..."
-            find "$LOCAL_TEMP_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \) -exec sh -c 'flac --silent --force "$1" -o "${1%.*}.flac" && rm "$1"' _ {} \;
-        fi
+        
+        # 常にFLAC変換を実行
+        find "$LOCAL_TEMP_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \) -exec sh -c 'flac --silent --force "$1" -o "${1%.*}.flac" && rm "$1"' _ {} \;
         echo "50"
 
-        echo "# 3/4: 7z暗号化中 (時間がかかる場合があります)..."
+        echo "# 2/3: 暗号化中 (高速・分割なし)..."
         cd "$LOCAL_TEMP_DIR" || exit
-        # 無圧縮モード(-mx=0)で暗号化。パスワードが空でも動作するように修正
-        if [ -n "$P_ARG" ]; then
-            7z a $P_ARG -mhe=off -v"${SPLIT_SIZE}" -mx=0 -mmt=on "${LOCAL_WORK_ROOT}/out.7z" . -y > /dev/null
-        else
-            7z a -v"${SPLIT_SIZE}" -mx=0 -mmt=on "${LOCAL_WORK_ROOT}/out.7z" . -y > /dev/null
-        fi
-        echo "75"
+        # V_ARG が空なら分割なしで実行
+        7z a $P_ARG -mhe=off $V_ARG -mx=0 -mmt=on "${LOCAL_WORK_ROOT}/${OUTPUT_BASE_NAME}.7z" . -y > /dev/null
+        echo "90"
 
-        echo "# 4/4: 保存先へ移動中..."
+        echo "# 3/3: 最終保存先へ移動中..."
         cd "$LOCAL_WORK_ROOT" || exit
-        for f in out.7z*; do
+        for f in "${OUTPUT_BASE_NAME}.7z"*; do
             [ -e "$f" ] || continue
-            DEST_NAME=$(echo "$f" | sed "s/out.7z/${OUTPUT_BASE_NAME}/")
-            cp "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
+            mv "$f" "${LOCAL_ARCHIVE_DIR}/"
         done
         
         rm -rf "$LOCAL_WORK_ROOT"
@@ -111,4 +102,4 @@ for TARGET_DIR in $TARGET_DIRS; do
     ) | zenity --progress --title="処理中: $DIR_NAME" --auto-close --pulsate
 done
 
-zenity --info --title="完了" --text="処理が完了しました。\n保存先: ${LOCAL_ARCHIVE_DIR}"
+zenity --info --title="完了" --text="バックアップが完了しました。"
