@@ -1,13 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     1.9.2 (Fixed Parsing)
+# Version:     1.9.3 (Debug & 7z Fix)
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
 for tool in "zenity" "7z" "flac"; do
     if ! command -v "$tool" &> /dev/null; then
-        zenity --error --text="必要なツール ($tool) が見つかりません。"
+        zenity --error --text="必要なツール ($tool) が見つかりません。インストールしてください。"
         exit 1
     fi
 done
@@ -33,7 +33,7 @@ if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
 fi
 
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.2" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.3" \
     --text="FLAC変換後、無圧縮7zで暗号化します。" \
     --add-combo="1. オーディオをFLACに変換するか" --combo-values="yes|no" \
     --add-entry="2. 分割容量 (例: 4400m)" \
@@ -44,7 +44,7 @@ CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.2" \
 
 [ $? -ne 0 ] || [ -z "$CONFIG" ] && exit
 
-# --- 【修正ポイント】パース処理の正確な割り当て ---
+# --- パース処理の修正 ---
 DO_FLAC_RAW=$(echo "$CONFIG" | cut -d',' -f1)
 SPLIT_SIZE_RAW=$(echo "$CONFIG" | cut -d',' -f2); SPLIT_SIZE=${SPLIT_SIZE_RAW:-4400m}
 SUFFIX=$(echo "$CONFIG" | cut -d',' -f3)
@@ -53,7 +53,12 @@ PASS2=$(echo "$CONFIG" | cut -d',' -f5)
 
 [ "$DO_FLAC_RAW" != "no" ] && DO_FLAC="yes" || DO_FLAC="no"
 [ "$PASS1" != "$PASS2" ] && { zenity --error --text="パスワード不一致"; exit 1; }
-P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
+
+# パスワード引数の構築（空でない場合のみ）
+P_ARG=""
+if [ -n "$PASS1" ]; then
+    P_ARG="-p${PASS1}"
+fi
 
 LOCAL_ARCHIVE_DIR="${HOME}/Backup_Archives"
 mkdir -p "$LOCAL_ARCHIVE_DIR"
@@ -71,7 +76,39 @@ for TARGET_DIR in $TARGET_DIRS; do
     LOCAL_TEMP_DIR="${LOCAL_WORK_ROOT}/${DIR_NAME}"
     mkdir -p "$LOCAL_TEMP_DIR"
 
-    # デバッグ用に出力をターミナルにも出す設定
     (
-        echo "# NASから取り込み開始: $DIR_NAME"
-        mapfile -t ALL_FILES < <(cd "$ABS_TARGET_DIR" && find . -type f)
+        echo "# 1/4: NASから取り込み中..."
+        cd "$ABS_TARGET_DIR" || exit
+        find . -type f -print0 | xargs -0 -I{} cp --parents {} "$LOCAL_TEMP_DIR/"
+        echo "25"
+
+        if [ "$DO_FLAC" = "yes" ]; then
+            echo "# 2/4: FLAC変換中..."
+            find "$LOCAL_TEMP_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \) -exec sh -c 'flac --silent --force "$1" -o "${1%.*}.flac" && rm "$1"' _ {} \;
+        fi
+        echo "50"
+
+        echo "# 3/4: 7z暗号化中 (時間がかかる場合があります)..."
+        cd "$LOCAL_TEMP_DIR" || exit
+        # 無圧縮モード(-mx=0)で暗号化。パスワードが空でも動作するように修正
+        if [ -n "$P_ARG" ]; then
+            7z a $P_ARG -mhe=off -v"${SPLIT_SIZE}" -mx=0 -mmt=on "${LOCAL_WORK_ROOT}/out.7z" . -y > /dev/null
+        else
+            7z a -v"${SPLIT_SIZE}" -mx=0 -mmt=on "${LOCAL_WORK_ROOT}/out.7z" . -y > /dev/null
+        fi
+        echo "75"
+
+        echo "# 4/4: 保存先へ移動中..."
+        cd "$LOCAL_WORK_ROOT" || exit
+        for f in out.7z*; do
+            [ -e "$f" ] || continue
+            DEST_NAME=$(echo "$f" | sed "s/out.7z/${OUTPUT_BASE_NAME}/")
+            cp "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
+        done
+        
+        rm -rf "$LOCAL_WORK_ROOT"
+        echo "100"
+    ) | zenity --progress --title="処理中: $DIR_NAME" --auto-close --pulsate
+done
+
+zenity --info --title="完了" --text="処理が完了しました。\n保存先: ${LOCAL_ARCHIVE_DIR}"
