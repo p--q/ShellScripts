@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-conversion.sh
-# Version:     3.2.2 (Conversion Title & Start Notification)
+# Version:     3.2.3 (Real-time File Display)
 # ==============================================================================
 
 # 1. 依存チェック
@@ -9,14 +9,14 @@ for tool in "zenity" "7z" "flac"; do
     command -v "$tool" &> /dev/null || { zenity --error --text="$tool が見つかりません。"; exit 1; }
 done
 
-# 2. フォルダ選択 (タイトルを「変換」に変更)
+# 2. フォルダ選択
 TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --title="変換したいNAS上のフォルダを選択してください")
 [ $? -ne 0 ] || [ -z "$TARGET_DIRS" ] && exit
 
-# 3. 設定入力 (タイトルを「変換」に変更)
-CONFIG=$(zenity --forms --title="音源変換設定 v3.2.2" \
+# 3. 設定入力
+CONFIG=$(zenity --forms --title="音源変換設定 v3.2.3" \
     --text="選択されたフォルダ内の音源を再帰的にFLAC変換し、暗号化保存します。" \
-    --add-entry="1. 接尾辞 (ファイル名の末尾に追加)" \
+    --add-entry="1. 接尾辞" \
     --add-entry="2. 分割容量 (例: 4400m)" \
     --add-password="3. パスワード" \
     --add-password="4. 確認" \
@@ -47,31 +47,35 @@ for TARGET in $TARGET_DIRS; do
     mkdir -p "$WORK_ROOT"
 
     (
-        # 即座にどのフォルダを処理するか表示
-        echo "# フォルダを認識しました: $DIR_NAME"
-        echo "10"
-        sleep 1
+        echo "# フォルダをスキャン中: $DIR_NAME"
+        echo "5"
         
-        echo "# 1/3: NASからデータを読み込み中... ($DIR_NAME)"
-        # cp -av を使用。NASからの応答待ちの間もタイトルが表示され続ける
-        cp -r "$TARGET" "$WORK_ROOT/" > /dev/null 2>&1
+        # 1/3: コピー進捗（ファイル名を表示）
+        echo "# 1/3: NASからコピー中..."
+        # cp -v を使い、パイプで一行ずつ読み取ってダイアログに流す
+        cp -rv "$TARGET" "$WORK_ROOT/" | while read -r line; do
+            # ファイル名だけを抽出して表示
+            echo "# コピー中: $(basename "$line")"
+        done
         
         COPIED_DIR="${WORK_ROOT}/${DIR_NAME}"
 
-        echo "# 2/3: 再帰的にFLAC変換中... ($DIR_NAME)"
-        find "$COPIED_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \) -exec sh -c '
-            for f do
-                echo "# 変換中: $(basename "$f")"
-                flac --silent --force "$f" -o "${file%.*}.flac" && rm "$f"
-            done
-        ' _ {} +
-        echo "70"
+        # 2/3: FLAC変換進捗（ファイル名を表示）
+        echo "# 2/3: 再帰的にFLAC変換中..."
+        # findの結果をループで回し、一つずつ処理
+        while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            echo "# 変換中: $(basename "$f")"
+            flac --silent --force "$f" -o "${f%.*}.flac" && rm "$f"
+        done <<< "$(find "$COPIED_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \))"
 
-        echo "# 3/3: 7z暗号化中... ($DIR_NAME)"
+        # 3/3: 暗号化（ここは7zが内部で処理するため、代表メッセージのみ）
+        echo "# 3/3: 暗号化保存中: $DIR_NAME"
+        echo "80"
         cd "$COPIED_DIR" || exit
         7z a $P_ARG -mhe=off $V_ARG -mx=0 -mmt=on "${WORK_ROOT}/${DIR_NAME}${SUFFIX}.7z" . -y > /dev/null
         
-        echo "# 処理完了ファイルを保存先へ移動中..."
+        echo "# 完了ファイルを移動中..."
         cd "$WORK_ROOT" || exit
         for f in "${DIR_NAME}${SUFFIX}.7z"*; do
             [ -e "$f" ] || continue
@@ -91,15 +95,11 @@ for TARGET in $TARGET_DIRS; do
         
         rm -rf "$WORK_ROOT"
         echo "100"
-    ) | zenity --progress --title="変換処理進行中" --width=500 --auto-close --pulsate
+    ) | zenity --progress --title="変換処理進行中" --width=600 --auto-close --pulsate
 done
 
 # 5. 最終報告
 MSG="すべての変換処理が完了しました。\n\n保存先: ${LOCAL_ARCHIVE_DIR}"
-if [ -s "$DUP_LOG_FILE" ]; then
-    DUPS=$(cat "$DUP_LOG_FILE" | sort -u)
-    MSG="${MSG}\n\n【注意】同名ファイルが存在したため連番を付与しました：\n${DUPS}"
-fi
-
+[ -s "$DUP_LOG_FILE" ] && MSG="${MSG}\n\n【連番付与】\n$(cat "$DUP_LOG_FILE" | sort -u)"
 rm -f "$DUP_LOG_FILE"
 zenity --info --title="変換完了" --text="$MSG"
