@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     2.0.1 (Stable Process - Function Mode)
+# Version:     2.1.0 (Nemo Context Menu Compatible)
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
@@ -12,11 +12,26 @@ for tool in "zenity" "7z" "flac"; do
     fi
 done
 
-# --- 2. フォルダ選択 ---
-TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --title="NAS上のフォルダを選択してください")
-[ $? -ne 0 ] || [ -z "$TARGET_DIRS" ] && exit
+# --- 2. ターゲットの取得 (引数があればそれを使用、なければダイアログを表示) ---
+if [ -n "$1" ]; then
+    # Nemoなどから引数として渡された場合
+    # 複数選択されている場合もあるので、全引数を "|" で繋ぐ
+    TARGET_DIRS=""
+    for arg in "$@"; do
+        if [ -d "$arg" ]; then
+            TARGET_DIRS="${TARGET_DIRS}${arg}|"
+        fi
+    done
+    TARGET_DIRS="${TARGET_DIRS%|}" # 最後の | を削除
+else
+    # 直接起動された場合はダイアログを開く
+    TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --title="NAS上のフォルダを選択してください")
+fi
+
+[ -z "$TARGET_DIRS" ] && exit
 
 # --- 3. 動的な空き容量チェック ---
+# (中略: v2.0.1と同じロジック)
 TOTAL_REQUIRED_KB=0
 IFS="|"
 for DIR in $TARGET_DIRS; do
@@ -33,8 +48,8 @@ if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
 fi
 
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v2.0.1" \
-    --text="FLAC変換とパスワード保護を自動実行します。" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v2.1.0" \
+    --text="FLAC変換とパスワード保護を実行します。" \
     --add-entry="1. ファイル名に付加する接尾辞" \
     --add-entry="2. 分割容量 (例: 4400m) [空欄で分割なし]" \
     --add-password="3. パスワード" \
@@ -55,11 +70,9 @@ P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
 
 LOCAL_ARCHIVE_DIR="${HOME}/Backup_Archives"
 mkdir -p "$LOCAL_ARCHIVE_DIR"
-
-# 重複ログ用の一時ファイル
 DUP_LOG_FILE=$(mktemp)
 
-# --- 5. メイン処理関数 ---
+# --- 5. メイン処理関数 (v2.0.1と同じ) ---
 process_backup() {
     local TARGET_DIR="$1"
     local ABS_TARGET_DIR=$(realpath "$TARGET_DIR")
