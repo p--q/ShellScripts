@@ -1,18 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     1.9.1
-# Description: NAS上のフォルダをローカルにコピーし、FLAC変換後に7zで暗号化。
-#              ※7zは「無圧縮(ストア)」モードで高速動作します。
-#              ※ヘッダー暗号化をオフにし、パスワードなしでファイル名を表示可能にします。
-# Requirements: zenity, p7zip-full, flac
+# Version:     1.9.2 (Fixed Parsing)
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
-MISSING_TOOLS=("zenity" "7z" "flac")
-for tool in "${MISSING_TOOLS[@]}"; do
+for tool in "zenity" "7z" "flac"; do
     if ! command -v "$tool" &> /dev/null; then
-        zenity --error --text="必要なツール ($tool) が見つかりません。インストールしてください。"
+        zenity --error --text="必要なツール ($tool) が見つかりません。"
         exit 1
     fi
 done
@@ -29,32 +24,54 @@ for DIR in $TARGET_DIRS; do
     DIR_SIZE=$(du -sk "$DIR" | cut -f1)
     TOTAL_REQUIRED_KB=$((TOTAL_REQUIRED_KB + DIR_SIZE))
 done
-
 BUFFERED_REQUIRED=$((TOTAL_REQUIRED_KB * 12 / 10))
 FREE_SPACE=$(df -Pk "$HOME" | awk 'NR==2 {print $4}')
 
 if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
-    REQUIRED_GB=$(echo "scale=2; $BUFFERED_REQUIRED/1024/1024" | bc)
-    FREE_GB=$(echo "scale=2; $FREE_SPACE/1024/1024" | bc)
-    zenity --error --text="容量不足です。\n要求: ${REQUIRED_GB} GB / 空き: ${FREE_GB} GB"
+    zenity --error --text="容量不足です。"
     exit 1
 fi
 
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.1" \
-    --text="FLAC変換後、無圧縮7zで暗号化します（ファイル名は可視設定）。" \
-    --add-combo="1. オーディオをFLACに変換するか [既定: yes]" --combo-values="yes|no" \
-    --add-entry="2. 分割容量 (例: 4400m) [既定: 4400m]" \
-    --add-entry="3. ファイル名に付加する接尾辞[既定: '']" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.2" \
+    --text="FLAC変換後、無圧縮7zで暗号化します。" \
+    --add-combo="1. オーディオをFLACに変換するか" --combo-values="yes|no" \
+    --add-entry="2. 分割容量 (例: 4400m)" \
+    --add-entry="3. ファイル名に付加する接尾辞" \
     --add-password="4. パスワード" \
     --add-password="5. パスワード（確認）" \
     --separator=",")
 
 [ $? -ne 0 ] || [ -z "$CONFIG" ] && exit
 
-# パース
+# --- 【修正ポイント】パース処理の正確な割り当て ---
 DO_FLAC_RAW=$(echo "$CONFIG" | cut -d',' -f1)
-SPLIT_SIZE_RAW=$(echo "$CONFIG" | cut -d',' -f3); SPLIT_SIZE=${SPLIT_SIZE_RAW:-4400m} # index修正
+SPLIT_SIZE_RAW=$(echo "$CONFIG" | cut -d',' -f2); SPLIT_SIZE=${SPLIT_SIZE_RAW:-4400m}
 SUFFIX=$(echo "$CONFIG" | cut -d',' -f3)
 PASS1=$(echo "$CONFIG" | cut -d',' -f4)
-PASS2=$(echo "$CONFIG" | cut -d',' -f
+PASS2=$(echo "$CONFIG" | cut -d',' -f5)
+
+[ "$DO_FLAC_RAW" != "no" ] && DO_FLAC="yes" || DO_FLAC="no"
+[ "$PASS1" != "$PASS2" ] && { zenity --error --text="パスワード不一致"; exit 1; }
+P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
+
+LOCAL_ARCHIVE_DIR="${HOME}/Backup_Archives"
+mkdir -p "$LOCAL_ARCHIVE_DIR"
+
+# --- 5. メイン処理 ---
+IFS="|"
+for TARGET_DIR in $TARGET_DIRS; do
+    [ -z "$TARGET_DIR" ] && continue
+
+    ABS_TARGET_DIR=$(realpath "$TARGET_DIR")
+    DIR_NAME=$(basename "$ABS_TARGET_DIR")
+    OUTPUT_BASE_NAME="${DIR_NAME}${SUFFIX}.7z"
+
+    LOCAL_WORK_ROOT="${HOME}/.backup_temp_work_$(date +%s)"
+    LOCAL_TEMP_DIR="${LOCAL_WORK_ROOT}/${DIR_NAME}"
+    mkdir -p "$LOCAL_TEMP_DIR"
+
+    # デバッグ用に出力をターミナルにも出す設定
+    (
+        echo "# NASから取り込み開始: $DIR_NAME"
+        mapfile -t ALL_FILES < <(cd "$ABS_TARGET_DIR" && find . -type f)
