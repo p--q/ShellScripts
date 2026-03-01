@@ -1,14 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     1.6
-# Description: NAS上のフォルダを対象とした、大容量対応バックアップスクリプト。
-#              ローカルの高速な作業領域を利用して以下の処理を自動化します：
-#              1. 作業領域の空き容量確認（40GB以上）
-#              2. 指定したNASフォルダからのデータ取り込み
-#              3. 音声ファイル（WAV/AIFF）のFLAC変換（オプション）
-#              4. 7z形式での分割圧縮およびAES-256暗号化
-#              5. 成果物のNASへの書き戻し ＆ ローカル保存（~/Backup_Archives）
+# Version:     1.6.1
+# Description: NAS上のフォルダを作業領域にコピーし、FLAC変換と7z圧縮を行う。
+#              ※本バージョンではNASへの書き戻しを無効化し、
+#              成果物はローカル（~/Backup_Archives）のみに保存されます。
 # Requirements: zenity, p7zip-full, flac
 # ==============================================================================
 
@@ -34,8 +30,8 @@ TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --t
 [ $? -ne 0 ] || [ -z "$TARGET_DIRS" ] && exit
 
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v1.6" \
-    --text="PCの内蔵ストレージを作業領域に使用し、完了後はローカルにも保存します。" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v1.6.1" \
+    --text="内蔵ストレージを作業領域にし、アーカイブをローカルに保存します。" \
     --add-combo="1. オーディオをFLACに変換するか [既定: yes]" --combo-values="yes|no" \
     --add-entry="2. 7z圧縮レベル (0-9) [既定: 3]" \
     --add-entry="3. 分割容量 (例: 4400m) [既定: 4400m]" \
@@ -54,7 +50,7 @@ SUFFIX=$(echo "$CONFIG" | cut -d',' -f4)
 PASS1=$(echo "$CONFIG" | cut -d',' -f5)
 PASS2=$(echo "$CONFIG" | cut -d',' -f6)
 
-[ "$DO_FLAC_RAW" != "no" ] && DO_FLAC="yes" || DO_FLAC_NO="no"
+[ "$DO_FLAC_RAW" != "no" ] && DO_FLAC="yes" || DO_FLAC="no"
 [ "$DO_FLAC" = "yes" ] && COMP_LEVEL=0 || COMP_LEVEL=${COMP_LEVEL_INPUT:-3}
 [ "$PASS1" != "$PASS2" ] && { zenity --error --text="パスワード不一致"; exit 1; }
 P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
@@ -78,9 +74,6 @@ for TARGET_DIR in $TARGET_DIRS; do
     mkdir -p "$LOCAL_TEMP_DIR"
 
     (
-        echo "# 既存のアーカイブをクリーンアップ中..."
-        rm -f "${PARENT_DIR}/${OUTPUT_BASE_NAME}"*
-
         # 1. NASからローカルへコピー
         mapfile -t ALL_FILES < <(cd "$ABS_TARGET_DIR" && find . -type f)
         TOTAL_FILES=${#ALL_FILES[@]}
@@ -113,15 +106,19 @@ for TARGET_DIR in $TARGET_DIRS; do
         7z a -mhe=on $P_ARG -v"${SPLIT_SIZE}" -mx="${COMP_LEVEL}" -mmt=on "${LOCAL_WORK_ROOT}/out.7z" . -y > /dev/null
         echo "85"
 
-        # 4. NASおよびローカル保存用フォルダへ転送
-        echo "# ファイルを転送中..."
+        # 4. 転送処理
+        echo "# ローカル保存フォルダへ転送中..."
         cd "$LOCAL_WORK_ROOT" || exit
         mapfile -t OUT_7Z < <(ls out.7z*)
         TOTAL_OUT=${#OUT_7Z[@]}
         COUNT_OUT=0
         for f in "${OUT_7Z[@]}"; do
             DEST_NAME=$(echo "$f" | sed "s/out.7z/${OUTPUT_BASE_NAME}/")
-            cp "$f" "${PARENT_DIR}/${DEST_NAME}"
+            
+            # --- NASへの書き出しを無効化 ---
+            # cp "$f" "${PARENT_DIR}/${DEST_NAME}"
+            
+            # ローカル保存
             cp "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
             
             COUNT_OUT=$((COUNT_OUT + 1))
@@ -134,4 +131,4 @@ for TARGET_DIR in $TARGET_DIRS; do
     ) | zenity --progress --title="処理中: $DIR_NAME" --auto-close --pulsate
 done
 
-zenity --info --title="完了" --text="バージョン 1.6 の処理が完了しました。\n\n【アーカイブの場所】\nNAS: 選択したフォルダの親ディレクトリ\nローカル: ${LOCAL_ARCHIVE_DIR}"
+zenity --info --title="完了" --text="処理が完了しました。\nアーカイブはローカルのみに保存されました。\n\n【保存先】\n${LOCAL_ARCHIVE_DIR}"
