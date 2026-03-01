@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     2.1.1 (Nemo Integration Fixed)
+# Version:     2.1.2 (Strict Argument Handling for Nemo)
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
@@ -12,25 +12,31 @@ for tool in "zenity" "7z" "flac"; do
     fi
 done
 
-# --- 2. ターゲットの取得 (Nemoからの入力を最優先) ---
-# Nemoは選択されたパスを改行区切りで変数に入れます。
+# --- 2. ターゲットの取得 (判定ロジックを刷新) ---
+TARGET_DIRS=""
+
+# Nemoの環境変数、または引数 ($@) があるかチェック
 if [ -n "$NEMO_SCRIPT_SELECTED_FILE_PATHS" ]; then
-    # Nemoの「スクリプト」メニューから実行された場合
+    # Nemoスクリプト変数がある場合
     TARGET_DIRS=$(echo "$NEMO_SCRIPT_SELECTED_FILE_PATHS" | tr '\n' '|')
-    TARGET_DIRS="${TARGET_DIRS%|}"
-elif [ -n "$1" ]; then
-    # 引数として直接渡された場合
-    TARGET_DIRS=""
+elif [ $# -gt 0 ]; then
+    # 引数が1つ以上存在する場合（Nemoの標準的な挙動はこちら）
     for arg in "$@"; do
-        [ -d "$arg" ] && TARGET_DIRS="${TARGET_DIRS}${arg}|"
+        # 絶対パスに変換して連結
+        ABS_PATH=$(realpath "$arg")
+        [ -d "$ABS_PATH" ] && TARGET_DIRS="${TARGET_DIRS}${ABS_PATH}|"
     done
-    TARGET_DIRS="${TARGET_DIRS%|}"
-else
-    # 何も指定がない場合のみダイアログを表示
+fi
+
+# 末尾のパイプを削除
+TARGET_DIRS="${TARGET_DIRS%|}"
+
+# もしここまでで空なら、初めてダイアログを出す
+if [ -z "$TARGET_DIRS" ]; then
     TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --title="NAS上のフォルダを選択してください")
 fi
 
-# 選択が空なら終了
+# それでも空（キャンセル）なら終了
 [ -z "$TARGET_DIRS" ] && exit
 
 # --- 3. 動的な空き容量チェック ---
@@ -39,7 +45,6 @@ OLD_IFS=$IFS
 IFS="|"
 for DIR in $TARGET_DIRS; do
     [ -z "$DIR" ] && continue
-    # パスに含まれる空白を正しく扱うためにクォート
     DIR_SIZE=$(du -sk "$DIR" | cut -f1)
     TOTAL_REQUIRED_KB=$((TOTAL_REQUIRED_KB + DIR_SIZE))
 done
@@ -47,12 +52,12 @@ BUFFERED_REQUIRED=$((TOTAL_REQUIRED_KB * 11 / 10))
 FREE_SPACE=$(df -Pk "$HOME" | awk 'NR==2 {print $4}')
 
 if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
-    zenity --error --text="容量不足です。残り $((FREE_SPACE / 1024))MB に対し $((BUFFERED_REQUIRED / 1024))MB 必要です。"
+    zenity --error --text="容量不足です。"
     exit 1
 fi
 
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v2.1.1" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v2.1.2" \
     --text="FLAC変換とパスワード保護を実行します。" \
     --add-entry="1. ファイル名に付加する接尾辞" \
     --add-entry="2. 分割容量 (例: 4400m) [空欄で分割なし]" \
@@ -110,32 +115,3 @@ process_backup() {
                 local BASE="${f%%.7z*}"
                 local COUNTER=1
                 while [ -e "${LOCAL_ARCHIVE_DIR}/${BASE}(${COUNTER}).${EXT}" ]; do
-                    ((COUNTER++))
-                done
-                DEST_NAME="${BASE}(${COUNTER}).${EXT}"
-            fi
-            mv "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
-        done
-        rm -rf "$LOCAL_WORK_ROOT"
-        echo "100"
-    ) | zenity --progress --title="処理中: $DIR_NAME" --auto-close --pulsate
-}
-
-# --- 6. 実行 ---
-# IFSを維持しつつループ
-IFS="|"
-for DIR in $TARGET_DIRS; do
-    [ -z "$DIR" ] && continue
-    process_backup "$DIR"
-done
-IFS=$OLD_IFS
-
-# --- 7. 最終ダイアログ ---
-MSG="処理が完了しました。\n\n保存先: ${LOCAL_ARCHIVE_DIR}"
-if [ -s "$DUP_LOG_FILE" ]; then
-    DUPS=$(cat "$DUP_LOG_FILE" | sort -u)
-    MSG="${MSG}\n\n【注意】既に存在していたため連番を付与しました：\n${DUPS}"
-fi
-
-rm -f "$DUP_LOG_FILE"
-zenity --info --title="完了" --text="$MSG"
