@@ -1,34 +1,21 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     3.1.1 (Recursive Processing & NAS Picker)
+# Version:     3.2.0 (Stable Selection & Recursive & Duplicate Report)
 # ==============================================================================
 
 # 1. 依存チェック
-for tool in "zenity" "7z" "flac" "gio"; do
-    command -v "$tool" &> /dev/null || { zenity --error --text="$tool が見つかりません"; exit 1; }
+for tool in "zenity" "7z" "flac"; do
+    command -v "$tool" &> /dev/null || { zenity --error --text="$tool が見つかりません。"; exit 1; }
 done
 
-# 2. ターゲット取得 (Nemoからの受け取り、失敗時はダイアログ)
-RAW_INPUTS="$NEMO_SCRIPT_SELECTED_FILE_PATHS"
-[ -z "$RAW_INPUTS" ] && RAW_INPUTS="$@"
+# 2. フォルダ選択 (NAS上のフォルダを直接選ぶ方式に戻しました)
+TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --title="NAS上の処理したいフォルダを選択してください")
+[ $? -ne 0 ] || [ -z "$TARGET_DIRS" ] && exit
 
-TARGET_LIST=()
-while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    TARGET_LIST+=("$line")
-done <<< "$(echo -e "$RAW_INPUTS")"
-
-# フォルダ選択ダイアログへのフォールバック
-if [ ${#TARGET_LIST[@]} -eq 0 ]; then
-    TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --title="NAS上の処理したいフォルダを選択してください")
-    [ -z "$TARGET_DIRS" ] && exit
-    IFS="|" read -ra TARGET_LIST <<< "$TARGET_DIRS"
-fi
-
-# 3. 設定入力パネル
-CONFIG=$(zenity --forms --title="NAS Backup v3.1.1" \
-    --text="選択されたフォルダを再帰的に処理します。" \
+# 3. 設定入力
+CONFIG=$(zenity --forms --title="NAS Backup v3.2.0" \
+    --text="選択されたフォルダ内をサブフォルダまで含めて処理します。" \
     --add-entry="1. 接尾辞" \
     --add-entry="2. 分割容量 (例: 4400m)" \
     --add-password="3. パスワード" \
@@ -49,45 +36,66 @@ P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
 
 LOCAL_ARCHIVE_DIR="${HOME}/Backup_Archives"
 mkdir -p "$LOCAL_ARCHIVE_DIR"
+DUP_LOG_FILE=$(mktemp)
 
-# 4. 処理実行
-for TARGET in "${TARGET_LIST[@]}"; do
+# 4. 処理ループ
+IFS="|"
+for TARGET in $TARGET_DIRS; do
+    [ -z "$TARGET" ] && continue
     DIR_NAME=$(basename "$TARGET")
-    # 作業用一時フォルダ
     WORK_ROOT="${HOME}/.backup_temp_$(date +%s)"
     mkdir -p "$WORK_ROOT"
 
     (
-        echo "# 1/3: NASからローカルへコピー中..."
-        # フォルダごとコピー (再帰的)
-        gio copy -r "$TARGET" "$WORK_ROOT/"
-        echo "30"
+        echo "# 1/3: データをローカルへ取り込み中..."
+        # cp -r でNASからローカルへコピー（安定性重視）
+        cp -r "$TARGET" "$WORK_ROOT/"
+        
+        # コピーされた実体ディレクトリのパスを取得
+        COPIED_DIR="${WORK_ROOT}/${DIR_NAME}"
 
-        # コピーされた実体ディレクトリを特定
-        COPIED_DIR=$(find "$WORK_ROOT" -maxdepth 1 -mindepth 1 -type d | head -n 1)
-        [ -z "$COPIED_DIR" ] && exit
-
-        echo "# 2/3: 全サブフォルダの音声を変換中..."
-        # 【再帰的処理】サブディレクトリを含め、すべてのWAV/AIFFをFLACへ変換
+        echo "# 2/3: サブディレクトリ含めFLAC変換中..."
+        # 再帰的にすべてのWAV/AIFFを検索して変換
         find "$COPIED_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \) -exec sh -c '
-            for file do
-                flac --silent --force "$file" -o "${file%.*}.flac" && rm "$file"
+            for f do
+                echo "# 変換中: $(basename "$f")"
+                flac --silent --force "$f" -o "${f%.*}.flac" && rm "$f"
             done
         ' _ {} +
-        echo "70"
 
-        echo "# 3/3: 7z暗号化中..."
+        echo "# 3/3: 7z暗号化 & 移動中..."
         cd "$COPIED_DIR" || exit
-        # 階層構造を維持して圧縮
         7z a $P_ARG -mhe=off $V_ARG -mx=0 -mmt=on "${WORK_ROOT}/${DIR_NAME}${SUFFIX}.7z" . -y > /dev/null
         
-        # 保存先へ移動
-        mv "${WORK_ROOT}/${DIR_NAME}${SUFFIX}.7z"* "$LOCAL_ARCHIVE_DIR/"
+        # 保存先へ移動 & 重複時の連番処理
+        cd "$WORK_ROOT" || exit
+        for f in "${DIR_NAME}${SUFFIX}.7z"*; do
+            [ -e "$f" ] || continue
+            DEST_NAME="$f"
+            if [ -e "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}" ]; then
+                echo "$f" >> "$DUP_LOG_FILE"
+                EXT="${f#*.}"
+                BASE="${f%%.7z*}"
+                COUNTER=1
+                while [ -e "${LOCAL_ARCHIVE_DIR}/${BASE}(${COUNTER}).${EXT}" ]; do
+                    ((COUNTER++))
+                done
+                DEST_NAME="${BASE}(${COUNTER}).${EXT}"
+            fi
+            mv "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
+        done
         
-        # 一時ファイルの削除
         rm -rf "$WORK_ROOT"
         echo "100"
-    ) | zenity --progress --title="一括処理中: $DIR_NAME" --auto-close --pulsate
+    ) | zenity --progress --title="バックアップ中: $DIR_NAME" --auto-close --pulsate
 done
 
-zenity --info --title="完了" --text="すべての
+# 5. 最終報告
+MSG="すべての処理が完了しました。\n\n保存先: ${LOCAL_ARCHIVE_DIR}"
+if [ -s "$DUP_LOG_FILE" ]; then
+    DUPS=$(cat "$DUP_LOG_FILE" | sort -u)
+    MSG="${MSG}\n\n【注意】以下のファイルは既に存在していたため、連番を付与しました：\n${DUPS}"
+fi
+
+rm -f "$DUP_LOG_FILE"
+zenity --info --title="完了" --text="$MSG"
