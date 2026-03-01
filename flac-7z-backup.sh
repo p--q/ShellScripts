@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     1.9.8 (Conflict Resolution - Auto Numbering)
+# Version:     1.9.9 (Variable Persistence Fix)
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
@@ -33,7 +33,7 @@ if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
 fi
 
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.8" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.9" \
     --text="FLAC変換とパスワード保護を自動実行します。" \
     --add-entry="1. ファイル名に付加する接尾辞" \
     --add-entry="2. 分割容量 (例: 4400m) [空欄で分割なし]" \
@@ -49,7 +49,7 @@ PASS1=$(echo "$CONFIG" | cut -d',' -f3)
 PASS2=$(echo "$CONFIG" | cut -d',' -f4)
 
 if [ "$PASS1" != "$PASS2" ]; then
-    zenity --error --text="パスワードが一致しません。\nもう一度やり直してください。"
+    zenity --error --text="パスワードが一致しません。"
     exit 1
 fi
 
@@ -59,8 +59,8 @@ P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
 LOCAL_ARCHIVE_DIR="${HOME}/Backup_Archives"
 mkdir -p "$LOCAL_ARCHIVE_DIR"
 
-# 重複報告用の変数
-DUPLICATE_LOG=""
+# --- 【修正点】重複ログ用の一時ファイルを作成 ---
+DUP_LOG_FILE=$(mktemp)
 
 # --- 5. メイン処理 ---
 IFS="|"
@@ -90,25 +90,22 @@ for TARGET_DIR in $TARGET_DIRS; do
         echo "# 3/3: 最終保存先へ移動中..."
         cd "$LOCAL_WORK_ROOT" || exit
         
-        # 成果物ファイルを一つずつ処理
         for f in "${OUTPUT_BASE_NAME}.7z"*; do
             [ -e "$f" ] || continue
             
             DEST_NAME="$f"
-            # 同名ファイルがある場合の連番処理
             if [ -e "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}" ]; then
-                DUPLICATE_LOG="${DUPLICATE_LOG}${DEST_NAME}\n"
+                # 一時ファイルに重複した名前を書き込む
+                echo "$f" >> "$DUP_LOG_FILE"
                 
-                EXT="${f#*.}" # 拡張子部分 (.7z または .7z.001など)
-                BASE="${f%%.7z*}" # ファイル名本体
-                
+                EXT="${f#*.}"
+                BASE="${f%%.7z*}"
                 COUNTER=1
                 while [ -e "${LOCAL_ARCHIVE_DIR}/${BASE}(${COUNTER}).${EXT}" ]; do
                     ((COUNTER++))
                 done
                 DEST_NAME="${BASE}(${COUNTER}).${EXT}"
             fi
-            
             mv "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
         done
         
@@ -119,8 +116,12 @@ done
 
 # --- 最終ダイアログの構築 ---
 MSG="処理が完了しました。\n\n保存先: ${LOCAL_ARCHIVE_DIR}"
-if [ -n "$DUPLICATE_LOG" ]; then
-    MSG="${MSG}\n\n【注意】以下のファイルは既に存在していたため、連番を付けて保存しました：\n${DUPLICATE_LOG}"
+if [ -s "$DUP_LOG_FILE" ]; then
+    DUPLICATES=$(cat "$DUP_LOG_FILE" | sort -u | sed 's/$/\\n/')
+    MSG="${MSG}\n\n【注意】以下のファイルは既に存在していたため、連番を付けて保存しました：\n${DUPLICATES}"
 fi
+
+# 一時ファイルの削除
+rm -f "$DUP_LOG_FILE"
 
 zenity --info --title="完了" --text="$MSG"
