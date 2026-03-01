@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     1.9.7 (Final Polish - Info Dialog Restored)
+# Version:     1.9.8 (Conflict Resolution - Auto Numbering)
 # ==============================================================================
 
 # --- 1. 依存ツールのチェック ---
@@ -33,7 +33,7 @@ if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
 fi
 
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.7" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.8" \
     --text="FLAC変換とパスワード保護を自動実行します。" \
     --add-entry="1. ファイル名に付加する接尾辞" \
     --add-entry="2. 分割容量 (例: 4400m) [空欄で分割なし]" \
@@ -43,24 +43,24 @@ CONFIG=$(zenity --forms --title="flac-7z-backup v1.9.7" \
 
 [ $? -ne 0 ] || [ -z "$CONFIG" ] && exit
 
-# パース
 SUFFIX=$(echo "$CONFIG" | cut -d',' -f1)
 SPLIT_SIZE_RAW=$(echo "$CONFIG" | cut -d',' -f2)
 PASS1=$(echo "$CONFIG" | cut -d',' -f3)
 PASS2=$(echo "$CONFIG" | cut -d',' -f4)
 
-# パスワード一致チェック
 if [ "$PASS1" != "$PASS2" ]; then
     zenity --error --text="パスワードが一致しません。\nもう一度やり直してください。"
     exit 1
 fi
 
-# 7zオプションの構築
 V_ARG=""; [ -n "$SPLIT_SIZE_RAW" ] && V_ARG="-v${SPLIT_SIZE_RAW}"
 P_ARG=""; [ -n "$PASS1" ] && P_ARG="-p${PASS1}"
 
 LOCAL_ARCHIVE_DIR="${HOME}/Backup_Archives"
 mkdir -p "$LOCAL_ARCHIVE_DIR"
+
+# 重複報告用の変数
+DUPLICATE_LOG=""
 
 # --- 5. メイン処理 ---
 IFS="|"
@@ -79,7 +79,6 @@ for TARGET_DIR in $TARGET_DIRS; do
         echo "# 1/3: 取り込み & 自動FLAC変換中..."
         cd "$ABS_TARGET_DIR" || exit
         find . -type f -print0 | xargs -0 -I{} cp --parents {} "$LOCAL_TEMP_DIR/"
-        
         find "$LOCAL_TEMP_DIR" -type f \( -iname "*.wav" -o -iname "*.aiff" \) -exec sh -c 'flac --silent --force "$1" -o "${1%.*}.flac" && rm "$1"' _ {} \;
         echo "50"
 
@@ -90,9 +89,27 @@ for TARGET_DIR in $TARGET_DIRS; do
 
         echo "# 3/3: 最終保存先へ移動中..."
         cd "$LOCAL_WORK_ROOT" || exit
+        
+        # 成果物ファイルを一つずつ処理
         for f in "${OUTPUT_BASE_NAME}.7z"*; do
             [ -e "$f" ] || continue
-            mv "$f" "${LOCAL_ARCHIVE_DIR}/"
+            
+            DEST_NAME="$f"
+            # 同名ファイルがある場合の連番処理
+            if [ -e "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}" ]; then
+                DUPLICATE_LOG="${DUPLICATE_LOG}${DEST_NAME}\n"
+                
+                EXT="${f#*.}" # 拡張子部分 (.7z または .7z.001など)
+                BASE="${f%%.7z*}" # ファイル名本体
+                
+                COUNTER=1
+                while [ -e "${LOCAL_ARCHIVE_DIR}/${BASE}(${COUNTER}).${EXT}" ]; do
+                    ((COUNTER++))
+                done
+                DEST_NAME="${BASE}(${COUNTER}).${EXT}"
+            fi
+            
+            mv "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
         done
         
         rm -rf "$LOCAL_WORK_ROOT"
@@ -100,5 +117,10 @@ for TARGET_DIR in $TARGET_DIRS; do
     ) | zenity --progress --title="処理中: $DIR_NAME" --auto-close --pulsate
 done
 
-# --- 【修正済み】完了ダイアログ ---
-zenity --info --title="完了" --text="処理が完了しました。\n\n保存先: ${LOCAL_ARCHIVE_DIR}"
+# --- 最終ダイアログの構築 ---
+MSG="処理が完了しました。\n\n保存先: ${LOCAL_ARCHIVE_DIR}"
+if [ -n "$DUPLICATE_LOG" ]; then
+    MSG="${MSG}\n\n【注意】以下のファイルは既に存在していたため、連番を付けて保存しました：\n${DUPLICATE_LOG}"
+fi
+
+zenity --info --title="完了" --text="$MSG"
