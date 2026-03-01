@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
 # Script Name: flac-7z-backup.sh
-# Version:     1.6.1
+# Version:     1.7
 # Description: NAS上のフォルダを作業領域にコピーし、FLAC変換と7z圧縮を行う。
-#              ※本バージョンではNASへの書き戻しを無効化し、
+#              ※空き容量チェックを「対象フォルダの合計サイズ」に基づいて動的に行います。
 #              成果物はローカル（~/Backup_Archives）のみに保存されます。
 # Requirements: zenity, p7zip-full, flac
 # ==============================================================================
@@ -17,20 +17,35 @@ for tool in "${MISSING_TOOLS[@]}"; do
     fi
 done
 
-# --- 2. 空き容量の事前チェック (40GB以上必要) ---
-FREE_SPACE=$(df -Pk "$HOME" | awk 'NR==2 {print $4}')
-REQUIRED_SPACE=41943040
-if [ "$FREE_SPACE" -lt "$REQUIRED_SPACE" ]; then
-    zenity --error --text="内蔵ストレージの空き容量が不足しています。\n最低40GB必要ですが、現在の空きは $((FREE_SPACE / 1024 / 1024))GB です。"
-    exit 1
-fi
-
-# --- 3. フォルダ選択 ---
+# --- 2. フォルダ選択 ---
 TARGET_DIRS=$(zenity --file-selection --directory --multiple --separator="|" --title="NAS上のフォルダを選択してください")
 [ $? -ne 0 ] || [ -z "$TARGET_DIRS" ] && exit
 
+# --- 3. 動的な空き容量チェック ---
+# 選択された全フォルダの合計サイズ(KB)を算出
+TOTAL_REQUIRED_KB=0
+IFS="|"
+for DIR in $TARGET_DIRS; do
+    [ -z "$DIR" ] && continue
+    DIR_SIZE=$(du -sk "$DIR" | cut -f1)
+    TOTAL_REQUIRED_KB=$((TOTAL_REQUIRED_KB + DIR_SIZE))
+done
+
+# 作業領域に必要な容量（1.1倍のバッファを持たせる）
+BUFFERED_REQUIRED=$((TOTAL_REQUIRED_KB * 11 / 10))
+
+# 現在のホームディレクトリの空き容量(KB)
+FREE_SPACE=$(df -Pk "$HOME" | awk 'NR==2 {print $4}')
+
+if [ "$FREE_SPACE" -lt "$BUFFERED_REQUIRED" ]; then
+    REQUIRED_GB=$(echo "scale=2; $BUFFERED_REQUIRED/1024/1024" | bc)
+    FREE_GB=$(echo "scale=2; $FREE_SPACE/1024/1024" | bc)
+    zenity --error --text="内蔵ストレージの空き容量が不足しています。\n\n対象の合計サイズ: ${REQUIRED_GB} GB (バッファ込)\n現在の空き容量: ${FREE_GB} GB\n\n処理を中断します。"
+    exit 1
+fi
+
 # --- 4. 設定入力パネル ---
-CONFIG=$(zenity --forms --title="flac-7z-backup v1.6.1" \
+CONFIG=$(zenity --forms --title="flac-7z-backup v1.7" \
     --text="内蔵ストレージを作業領域にし、アーカイブをローカルに保存します。" \
     --add-combo="1. オーディオをFLACに変換するか [既定: yes]" --combo-values="yes|no" \
     --add-entry="2. 7z圧縮レベル (0-9) [既定: 3]" \
@@ -115,9 +130,6 @@ for TARGET_DIR in $TARGET_DIRS; do
         for f in "${OUT_7Z[@]}"; do
             DEST_NAME=$(echo "$f" | sed "s/out.7z/${OUTPUT_BASE_NAME}/")
             
-            # --- NASへの書き出しを無効化 ---
-            # cp "$f" "${PARENT_DIR}/${DEST_NAME}"
-            
             # ローカル保存
             cp "$f" "${LOCAL_ARCHIVE_DIR}/${DEST_NAME}"
             
@@ -131,4 +143,4 @@ for TARGET_DIR in $TARGET_DIRS; do
     ) | zenity --progress --title="処理中: $DIR_NAME" --auto-close --pulsate
 done
 
-zenity --info --title="完了" --text="処理が完了しました。\nアーカイブはローカルのみに保存されました。\n\n【保存先】\n${LOCAL_ARCHIVE_DIR}"
+zenity --info --title="完了" --text="処理が完了しました。\n\n【保存先】\n${LOCAL_ARCHIVE_DIR}"
