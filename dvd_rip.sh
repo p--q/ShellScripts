@@ -1,39 +1,36 @@
 #!/bin/bash
 
-# File: dvd_rip_v3_1.sh
-# Description: スペースを含むマウントポイント（Christmas Pageant2025等）に完全対応
+# File: dvd_rip.sh
+# Version: 1.3.1
+# Description: 進捗(%)表示付きDVD取り込みスクリプト。
+#              スペースを含むマウントポイントやVOB連結処理に対応。
 
 OUTPUT_DIR="$HOME/ビデオ"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUTPUT_FILE="$OUTPUT_DIR/${TIMESTAMP}.mp4"
 
-# --- DVDの自動検出（もっとも確実な方法に変更） ---
-# dfコマンドから、DVD（/dev/sr0）がマウントされている場所を直接抽出します
+# --- DVDの自動検出（ドライブデバイスから直接パスを取得） ---
 DVD_PATH=$(df --output=target /dev/sr0 2>/dev/null | tail -n 1)
 
-# チェック: パスが空、またはディレクトリが存在しない場合
+# チェック: マウントされていない場合
 if [ -z "$DVD_PATH" ] || [ "$DVD_PATH" = "target" ]; then
-    zenity --error --text="DVDドライブ(sr0)がマウントされていません。\nディスクを入れて数秒待ってから再試行してください。"
+    zenity --error --text="DVDドライブが認識されていません。\nディスクを入れて数秒待ってから実行してください。"
     exit 1
 fi
 
-# 確認用メッセージ（デバッグ用：不要なら消してOK）
-echo "Detected DVD Path: [$DVD_PATH]"
-
-# --- VOBファイルのリストアップ（変数を必ず "" で囲む） ---
-# findコマンドを使ってスペース入りのパスでも確実にファイルを繋げます
+# --- VOBファイルのリストアップ（スペース対応） ---
 VOB_FILES=$(find "$DVD_PATH/VIDEO_TS" -name "VTS_01_[1-9].VOB" | sort | tr '\n' '|' | sed 's/|$//')
 
 if [ -z "$VOB_FILES" ]; then
-    zenity --error --text="VOBファイルが見つかりません。\nパス: $DVD_PATH/VIDEO_TS"
+    zenity --error --text="変換対象のVOBファイルが見つかりません。\nパス: $DVD_PATH/VIDEO_TS"
     exit 1
 fi
 
-# --- 総時間の取得 ---
+# --- 総再生時間の取得（進捗計算用） ---
 DURATION=$(ffprobe -i "concat:$VOB_FILES" -show_entries format=duration -v quiet -of csv='p=0')
 DURATION_INT=${DURATION%.*}
 
-# --- 変換処理 ---
+# --- 変換処理（プログレスバー表示） ---
 ffmpeg -i "concat:$VOB_FILES" \
     -c:v libx264 -crf 20 -preset medium -vf "yadif" -c:a aac -b:a 192k \
     -progress pipe:1 -nostats -y "$OUTPUT_FILE" 2>&1 | \
@@ -46,11 +43,13 @@ ffmpeg -i "concat:$VOB_FILES" \
             printf "%d\n", pct;
         }
         fflush();
-    }' | zenity --progress --title="DVD変換中" --text="保存先: $OUTPUT_FILE\n進捗を確認しています..." \
+    }' | zenity --progress --title="DVD変換実行中" \
+               --text="保存先: $OUTPUT_FILE\n変換が完了するまでお待ちください..." \
                --percentage=0 --auto-close --auto-kill
 
-if [ $? -eq 0 ]; then
-    zenity --info --text="完了しました！\nファイル: $OUTPUT_FILE"
+# --- 最終結果の通知 ---
+if [ ${PIPESTATUS[1]} -eq 0 ]; then
+    zenity --info --title="完了" --text="ビデオの保存が完了しました！\n場所: $OUTPUT_FILE"
 else
-    zenity --error --text="変換に失敗したか、キャンセルされました。"
+    zenity --warning --title="中断" --text="処理がキャンセルされたか、エラーが発生しました。"
 fi
