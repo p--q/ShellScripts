@@ -1,31 +1,31 @@
 #!/bin/bash
 
-# File: dvd_rip_v3.sh
-# Version: 1.3.0
-# Description: パスにスペースが含まれるDVD（Christmas Pageant 2025等）に対応
+# File: dvd_rip_v3_1.sh
+# Description: スペースを含むマウントポイント（Christmas Pageant2025等）に完全対応
 
 OUTPUT_DIR="$HOME/ビデオ"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUTPUT_FILE="$OUTPUT_DIR/${TIMESTAMP}.mp4"
 
-# --- DVDの自動検出（スペースがあってもOK） ---
-DVD_PATH=$(mount | grep -i "udf\|iso9660" | awk -F ' on ' '{print $2}' | awk '{print $1}')
-# もし上記でうまく取れない場合は、より確実に /media/pq 配下を探す
-if [ -z "$DVD_PATH" ]; then
-    DVD_PATH=$(find /media/$USER -maxdepth 1 -mindepth 1 -type d | head -n 1)
-fi
+# --- DVDの自動検出（もっとも確実な方法に変更） ---
+# dfコマンドから、DVD（/dev/sr0）がマウントされている場所を直接抽出します
+DVD_PATH=$(df --output=target /dev/sr0 2>/dev/null | tail -n 1)
 
-# チェック: 変数を必ず "" で囲む
-if [ -z "$DVD_PATH" ] || [ ! -d "$DVD_PATH/VIDEO_TS" ]; then
-    zenity --error --text="DVDのマウントポイントが見つかりません。\n確認されたパス: $DVD_PATH"
+# チェック: パスが空、またはディレクトリが存在しない場合
+if [ -z "$DVD_PATH" ] || [ "$DVD_PATH" = "target" ]; then
+    zenity --error --text="DVDドライブ(sr0)がマウントされていません。\nディスクを入れて数秒待ってから再試行してください。"
     exit 1
 fi
 
-# --- VOBファイルのリストアップ（ここもダブルクォーテーションが重要） ---
-VOB_FILES=$(ls "$DVD_PATH/VIDEO_TS"/VTS_01_[1-9].VOB 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+# 確認用メッセージ（デバッグ用：不要なら消してOK）
+echo "Detected DVD Path: [$DVD_PATH]"
+
+# --- VOBファイルのリストアップ（変数を必ず "" で囲む） ---
+# findコマンドを使ってスペース入りのパスでも確実にファイルを繋げます
+VOB_FILES=$(find "$DVD_PATH/VIDEO_TS" -name "VTS_01_[1-9].VOB" | sort | tr '\n' '|' | sed 's/|$//')
 
 if [ -z "$VOB_FILES" ]; then
-    zenity --error --text="VOBファイルが見つかりません。VTS_01以外のタイトルの可能性があります。"
+    zenity --error --text="VOBファイルが見つかりません。\nパス: $DVD_PATH/VIDEO_TS"
     exit 1
 fi
 
@@ -41,14 +41,16 @@ ffmpeg -i "concat:$VOB_FILES" \
     /out_time_ms/ {
         split($0, a, "="); 
         sec = a[2] / 1000000;
-        pct = (sec / dur) * 100;
-        printf "%d\n", pct;
+        if (dur > 0) {
+            pct = (sec / dur) * 100;
+            printf "%d\n", pct;
+        }
         fflush();
-    }' | zenity --progress --title="DVD変換中" --text="保存先: $OUTPUT_FILE" \
+    }' | zenity --progress --title="DVD変換中" --text="保存先: $OUTPUT_FILE\n進捗を確認しています..." \
                --percentage=0 --auto-close --auto-kill
 
 if [ $? -eq 0 ]; then
-    zenity --info --text="完了しました！"
+    zenity --info --text="完了しました！\nファイル: $OUTPUT_FILE"
 else
-    zenity --error --text="変換に失敗しました。"
+    zenity --error --text="変換に失敗したか、キャンセルされました。"
 fi
