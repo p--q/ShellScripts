@@ -1,1 +1,0 @@
-rclone による Google ドライブ自動マウント＆環境移行マニュアルrclone を使用して Google ドライブをローカルの Thunar（ファイルマネージャー）と一体化させ、その設定を別の PC（Debian Xfce）へ一瞬で移植するためのスクリプト群の使い方ガイドです。📂 登場するスクリプト一覧スクリプト名役割実行するPCmount_gdrive.shログイン時に古いロックを掃除し、自動マウントして Thunar をリフレッシュする。現PC / 新PC 両方backup_rclone.sh現在の rclone 設定とマウントスクリプトを1つのフォルダにまとめる。現在のPCrestore_rclone.sh新PCで rclone の導入、設定配置、Xfce自動起動への登録を全自動で行う。新しいPC
